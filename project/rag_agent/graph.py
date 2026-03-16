@@ -1,5 +1,4 @@
 from langgraph.graph import START, END, StateGraph
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import ToolNode
 from functools import partial
 
@@ -7,11 +6,9 @@ from .graph_state import State
 from .nodes import *
 from .edges import *
 
-def create_agent_graph(llm, tools_list):
+def create_agent_graph(llm, tools_list, checkpointer):
     llm_with_tools = llm.bind_tools(tools_list)
     tool_node = ToolNode(tools_list)
-
-    checkpointer = InMemorySaver()
 
     print("Compiling agent graph...")
     agent_builder = StateGraph(AgentState)

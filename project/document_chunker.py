@@ -20,15 +20,27 @@ class DocumentChuncker:
     def create_chunks(self, path_dir=config.MARKDOWN_DIR):
         all_parent_chunks, all_child_chunks = [], []
 
-        for doc_path_str in sorted(glob.glob(os.path.join(path_dir, "*.md"))):
+        # Support grouping documents into "namespaces" via subdirectories.
+        # Example: markdown_docs/state1/doc.md will be tagged with state="state1".
+        for doc_path_str in sorted(glob.glob(os.path.join(path_dir, "**", "*.md"), recursive=True)):
             doc_path = Path(doc_path_str)
-            parent_chunks, child_chunks = self.create_chunks_single(doc_path)
+
+            # Derive a "state" (namespace) from the immediate subdirectory under path_dir.
+            state = None
+            try:
+                rel = doc_path.relative_to(path_dir)
+                if len(rel.parts) > 1:
+                    state = "/".join(rel.parts[:-1])
+            except Exception:
+                state = None
+
+            parent_chunks, child_chunks = self.create_chunks_single(doc_path, state=state)
             all_parent_chunks.extend(parent_chunks)
             all_child_chunks.extend(child_chunks)
         
         return all_parent_chunks, all_child_chunks
 
-    def create_chunks_single(self, md_path):
+    def create_chunks_single(self, md_path, state: str | None = None):
         doc_path = Path(md_path)
         
         with open(doc_path, "r", encoding="utf-8") as f:
@@ -39,7 +51,7 @@ class DocumentChuncker:
         cleaned_parents = self.__clean_small_chunks(split_parents)
         
         all_parent_chunks, all_child_chunks = [], []
-        self.__create_child_chunks(all_parent_chunks, all_child_chunks, cleaned_parents, doc_path)
+        self.__create_child_chunks(all_parent_chunks, all_child_chunks, cleaned_parents, doc_path, state)
         return all_parent_chunks, all_child_chunks
 
     def __merge_small_parents(self, chunks):
@@ -118,10 +130,16 @@ class DocumentChuncker:
         
         return cleaned
 
-    def __create_child_chunks(self, all_parent_pairs, all_child_chunks, parent_chunks, doc_path):
+    def __create_child_chunks(self, all_parent_pairs, all_child_chunks, parent_chunks, doc_path, state: str | None = None):
         for i, p_chunk in enumerate(parent_chunks):
-            parent_id = f"{doc_path.stem}_parent_{i}"
-            p_chunk.metadata.update({"source": str(doc_path.stem)+".pdf", "parent_id": parent_id})
+            # Use state as part of the parent_id to avoid collisions across namespaces.
+            state_prefix = (state or "all").replace("/", "_")
+            parent_id = f"{state_prefix}_{doc_path.stem}_parent_{i}"
+            p_chunk.metadata.update({
+                "source": doc_path.name,
+                "parent_id": parent_id,
+                "state": state or "all",
+            })
             
             all_parent_pairs.append((parent_id, p_chunk))
             all_child_chunks.extend(self.__child_splitter.split_documents([p_chunk]))

@@ -7,3 +7,13 @@ docs/
 __pycache__/
 .vscode/
 .env
+
+# Runtime artifacts / local storage
+project/qdrant_db/
+project/documents/
+project/langgraph_checkpoints.db*
+project/chat_history.json
+
+# Local tooling
+Dockerfile.cloud
+infra/

@@ -1,26 +1,233 @@
+import json
+import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from pathlib import Path
+
 from langchain_core.messages import HumanMessage
 
+_PENDING = "__PENDING__"
+_INTERRUPTED = "⚠️ Response interrupted — please resend your message."
+
+
 class ChatInterface:
-    
     def __init__(self, rag_system):
         self.rag_system = rag_system
-        
-    def chat(self, message, history):
+        self.history_path = Path(__file__).resolve().parents[1] / "chat_history.json"
+        self.history_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="ai_worker")
+        self._cancelled: set = set()
+        self._ensure_history_file()
+        self.cleanup_stale_pending()   # convert orphaned PENDING from prior crashes/restarts
 
+    def _ensure_history_file(self):
+        if not self.history_path.exists():
+            self.history_path.write_text("[]", encoding="utf-8")
+
+    # ── File I/O (always call under self._lock) ───────────────────────────────
+
+    def _load_history(self):
+        if not self.history_path.exists():
+            return []
+        try:
+            data = json.loads(self.history_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        # Legacy flat-list format
+        if data and isinstance(data, list) and isinstance(data[0], dict) and "role" in data[0]:
+            return [{
+                "session_id": str(uuid.uuid4()),
+                "created_at": datetime.utcnow().isoformat() + "Z",
+                "title": "Legacy Chat",
+                "messages": data,
+            }]
+        return data
+
+    def _save_history(self, sessions):
+        try:
+            self.history_path.write_text(json.dumps(sessions, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    # ── Public read methods ───────────────────────────────────────────────────
+
+    def get_history(self):
+        with self._lock:
+            sessions = self._load_history()
+        if not sessions:
+            return []
+        return sessions[-1].get("messages", [])
+
+    def get_sessions(self):
+        with self._lock:
+            sessions = self._load_history()
+        formatted = []
+        for s in sessions:
+            messages = s.get("messages", [])
+            title = s.get("title") or (messages[0].get("message")[:32] + "...") if messages else "(empty)"
+            formatted.append({
+                "session_id": s.get("session_id"),
+                "created_at": s.get("created_at"),
+                "title": title,
+            })
+        return formatted
+
+    def get_session_messages(self, session_id: str):
+        with self._lock:
+            sessions = self._load_history()
+        for s in sessions:
+            if s.get("session_id") == session_id:
+                return [
+                    {"role": msg.get("role", "user"), "content": msg.get("message", "")}
+                    for msg in s.get("messages", [])
+                ]
+        return []
+
+    def is_session_pending(self, session_id: str) -> bool:
+        msgs = self.get_session_messages(session_id)
+        return any(m["content"] == _PENDING for m in msgs)
+
+    # ── Write helpers ─────────────────────────────────────────────────────────
+
+    def _append_history(self, role: str, message: str, session_id: str | None = None):
+        with self._lock:
+            sessions, session = self._ensure_session_unlocked(session_id)
+            if role == "user" and not session.get("messages"):
+                session["title"] = (message or "New Chat").strip()[:60]
+            session.get("messages", []).append({
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "role": role,
+                "message": message,
+            })
+            self._save_history(sessions)
+            return session.get("session_id")
+
+    def _update_pending(self, session_id: str, response: str):
+        """Replace the __PENDING__ placeholder with the real AI response."""
+        with self._lock:
+            sessions = self._load_history()
+            for s in sessions:
+                if s.get("session_id") == session_id:
+                    for msg in reversed(s.get("messages", [])):
+                        if msg.get("message") == _PENDING:
+                            msg["message"] = response
+                            msg["timestamp"] = datetime.utcnow().isoformat() + "Z"
+                            break
+                    break
+            self._save_history(sessions)
+
+    def cleanup_stale_pending(self):
+        """Convert any leftover PENDING messages (from crashed/restarted server)."""
+        with self._lock:
+            sessions = self._load_history()
+            changed = False
+            for s in sessions:
+                for msg in s.get("messages", []):
+                    if msg.get("message") == _PENDING:
+                        msg["message"] = _INTERRUPTED
+                        changed = True
+            if changed:
+                self._save_history(sessions)
+
+    def _ensure_session_unlocked(self, session_id: str | None = None):
+        """Like _ensure_session but assumes lock is already held."""
+        sessions = self._load_history()
+        if not sessions:
+            sessions = [{
+                "session_id": str(uuid.uuid4()),
+                "created_at": datetime.utcnow().isoformat() + "Z",
+                "title": "New Chat",
+                "messages": [],
+            }]
+        if session_id:
+            for s in sessions:
+                if s.get("session_id") == session_id:
+                    return sessions, s
+        return sessions, sessions[-1]
+
+    def delete_session(self, session_id: str):
+        with self._lock:
+            sessions = self._load_history()
+            sessions = [s for s in sessions if s.get("session_id") != session_id]
+            self._save_history(sessions)
+
+    def clear_history(self):
+        with self._lock:
+            self.history_path.write_text("[]", encoding="utf-8")
+
+    def create_new_session(self, title: str | None = None):
+        with self._lock:
+            sessions = self._load_history()
+            session = {
+                "session_id": str(uuid.uuid4()),
+                "created_at": datetime.utcnow().isoformat() + "Z",
+                "title": title or "New Chat",
+                "messages": [],
+            }
+            sessions.append(session)
+            self._save_history(sessions)
+            return session["session_id"]
+
+    # ── Chat submission ───────────────────────────────────────────────────────
+
+    def submit_async(self, message: str, session_id: str | None = None) -> str:
+        """Store user message + PENDING marker, start AI call in background thread.
+        Returns session_id immediately — never blocks."""
         if not self.rag_system.agent_graph:
-            return "⚠️ System not initialized!"
+            session_id = self._append_history("user", message.strip(), session_id=session_id)
+            self._append_history("assistant", "⚠️ System not initialized!", session_id=session_id)
+            return session_id
 
+        session_id = self._append_history("user", message.strip(), session_id=session_id)
+        self._append_history("assistant", _PENDING, session_id=session_id)
+        self._executor.submit(self._invoke_and_update, message.strip(), session_id)
+        return session_id
+
+    def stop_session(self, session_id: str):
+        """Immediately cancel a pending session (marks it stopped; background thread discards result)."""
+        self._cancelled.add(session_id)
+        self._update_pending(session_id, "⏹ Response stopped.")
+
+    def _invoke_and_update(self, message: str, session_id: str):
+        """Background worker: run the agent and replace __PENDING__ with the response."""
+        try:
+            result = self.rag_system.agent_graph.invoke(
+                {"messages": [HumanMessage(content=message)]},
+                self.rag_system.get_config(thread_id=session_id),
+            )
+            response = result["messages"][-1].content
+        except Exception as e:
+            response = f"❌ Error: {str(e)}"
+        finally:
+            try:
+                self.rag_system.observability.flush()
+            except Exception:
+                pass
+        if session_id in self._cancelled:
+            self._cancelled.discard(session_id)
+        else:
+            self._update_pending(session_id, response)
+
+    # ── Legacy synchronous chat (kept for compatibility) ──────────────────────
+
+    def chat(self, message, history, session_id: str | None = None):
+        if not self.rag_system.agent_graph:
+            return "⚠️ System not initialized!", session_id
+        session_id = self._append_history("user", message.strip(), session_id=session_id)
         try:
             result = self.rag_system.agent_graph.invoke(
                 {"messages": [HumanMessage(content=message.strip())]},
-                self.rag_system.get_config()
+                self.rag_system.get_config(thread_id=session_id),
             )
-            return result["messages"][-1].content
-
+            response = result["messages"][-1].content
+            self._append_history("assistant", response, session_id=session_id)
+            return response, session_id
         except Exception as e:
-            return f"❌ Error: {str(e)}"
+            return f"❌ Error: {str(e)}", session_id
         finally:
             self.rag_system.observability.flush()
-    
-    def clear_session(self):
-        self.rag_system.reset_thread()
+
+    def clear_session(self, session_id: str | None = None):
+        self.rag_system.reset_thread(thread_id=session_id)

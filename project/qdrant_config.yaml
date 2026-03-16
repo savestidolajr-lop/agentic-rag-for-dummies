@@ -1,0 +1,17 @@
+log_level: INFO
+
+storage:
+  # Where to store all the data (relative to where qdrant is started)
+  storage_path: ./qdrant_db
+  # Where to store snapshots
+  snapshots_path: ./qdrant_db/snapshots
+
+service:
+  # Host to bind the service on
+  host: 0.0.0.0
+
+  # HTTP API port
+  http_port: 6333
+
+  # gRPC port (optional, not required by this app)
+  grpc_port: 6334

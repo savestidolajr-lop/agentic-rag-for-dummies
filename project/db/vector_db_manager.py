@@ -8,8 +8,18 @@ class VectorDbManager:
     __client: QdrantClient
     __dense_embeddings: HuggingFaceEmbeddings
     __sparse_embeddings: FastEmbedSparse
+
     def __init__(self):
-        self.__client = QdrantClient(path=config.QDRANT_DB_PATH)
+        # Prefer connecting to a running Qdrant server (recommended for concurrency and stability).
+        # If Qdrant isn't running, it will fall back to local embedded mode.
+        try:
+            self.__client = QdrantClient(url=config.QDRANT_URL)
+            # Try a lightweight request to confirm connection
+            self.__client.get_collections()
+        except Exception:
+            # Fallback: use local (binary-based) mode via storage path
+            self.__client = QdrantClient(path=config.QDRANT_DB_PATH)
+
         self.__dense_embeddings = HuggingFaceEmbeddings(model_name=config.DENSE_MODEL)
         self.__sparse_embeddings = FastEmbedSparse(model_name=config.SPARSE_MODEL)
 

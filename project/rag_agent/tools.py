@@ -1,28 +1,50 @@
 from typing import List
 from langchain_core.tools import tool
 from db.parent_store_manager import ParentStoreManager
+from qdrant_client.http import models as qmodels
 
 class ToolFactory:
     
     def __init__(self, collection):
         self.collection = collection
         self.parent_store_manager = ParentStoreManager()
+        self.state_filter = None
     
-    def _search_child_chunks(self, query: str, limit: int) -> str:
+    def set_state_filter(self, state: str | None):
+        """Set a namespace/state filter used for retrieval."""
+        self.state_filter = state
+
+    def _search_child_chunks(self, query: str, limit: int, state: str | None = None) -> str:
         """Search for the top K most relevant child chunks.
         
         Args:
             query: Search query string
             limit: Maximum number of results to return
+            state: Optional state/namespace filter.
         """
         try:
-            results = self.collection.similarity_search(query, k=limit, score_threshold=0.7)
+            qdrant_filter = None
+            effective_state = state or self.state_filter
+            if effective_state and effective_state.lower() not in ("all", "all states"):
+                qdrant_filter = qmodels.Filter(
+                    must=[qmodels.FieldCondition(
+                        key="metadata.state",
+                        match=qmodels.MatchValue(value=effective_state),
+                    )]
+                )
+
+            results = self.collection.similarity_search(
+                query,
+                k=limit,
+                filter=qdrant_filter,
+            )
             if not results:
                 return "NO_RELEVANT_CHUNKS"
 
             return "\n\n".join([
                 f"Parent ID: {doc.metadata.get('parent_id', '')}\n"
                 f"File Name: {doc.metadata.get('source', '')}\n"
+                f"State: {doc.metadata.get('state', '')}\n"
                 f"Content: {doc.page_content.strip()}"
                 for doc in results
             ])            

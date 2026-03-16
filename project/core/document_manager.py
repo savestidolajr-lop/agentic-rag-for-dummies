@@ -9,8 +9,10 @@ class DocumentManager:
         self.rag_system = rag_system
         self.markdown_dir = Path(config.MARKDOWN_DIR)
         self.markdown_dir.mkdir(parents=True, exist_ok=True)
+        self.documents_dir = Path(config.DOCUMENTS_DIR)
+        self.documents_dir.mkdir(parents=True, exist_ok=True)
         
-    def add_documents(self, document_paths, progress_callback=None):
+    def add_documents(self, document_paths, state: str | None = None, progress_callback=None):
         if not document_paths:
             return 0, 0
             
@@ -28,18 +30,31 @@ class DocumentManager:
                 progress_callback((i + 1) / len(document_paths), f"Processing {Path(doc_path).name}")
                 
             doc_name = Path(doc_path).stem
-            md_path = self.markdown_dir / f"{doc_name}.md"
-            
+            # Keep documents organized by state/namespace if provided
+            target_dir = self.markdown_dir
+            if state:
+                target_dir = self.markdown_dir / state
+                target_dir.mkdir(parents=True, exist_ok=True)
+
+            md_path = target_dir / f"{doc_name}.md"
+
+            # Save original file for later download
+            orig_dir = self.documents_dir / state if state else self.documents_dir
+            orig_dir.mkdir(parents=True, exist_ok=True)
+            orig_dest = orig_dir / Path(doc_path).name
+            if not orig_dest.exists():
+                shutil.copy(doc_path, orig_dest)
+
             if md_path.exists():
                 skipped += 1
                 continue
-                
-            try:            
+
+            try:
                 if Path(doc_path).suffix.lower() == ".md":
                     shutil.copy(doc_path, md_path)
                 else:
-                    pdfs_to_markdowns(str(doc_path), overwrite=False)            
-                parent_chunks, child_chunks = self.rag_system.chunker.create_chunks_single(md_path)
+                    pdfs_to_markdowns(str(doc_path), overwrite=False, output_dir=target_dir)
+                parent_chunks, child_chunks = self.rag_system.chunker.create_chunks_single(md_path, state=state)
                 
                 if not child_chunks:
                     skipped += 1
@@ -60,13 +75,44 @@ class DocumentManager:
     def get_markdown_files(self):
         if not self.markdown_dir.exists():
             return []
-        return sorted([p.name.replace(".md", ".pdf") for p in self.markdown_dir.glob("*.md")])
-    
+
+        results = []
+        for p in sorted(self.markdown_dir.rglob("*.md")):
+            # Show the state namespace in the display name when present
+            try:
+                rel = p.relative_to(self.markdown_dir)
+                if len(rel.parts) > 1:
+                    results.append(str(rel.with_suffix(".pdf")))
+                else:
+                    results.append(str(rel.with_suffix(".pdf")))
+            except Exception:
+                results.append(p.name.replace(".md", ".pdf"))
+        return results
+
+    def get_states(self):
+        """Return a sorted list of known namespaces (states) derived from the markdown folder layout."""
+        if not self.markdown_dir.exists():
+            return []
+
+        states = set()
+        for p in self.markdown_dir.rglob("*.md"):
+            try:
+                rel = p.relative_to(self.markdown_dir)
+                if len(rel.parts) > 1:
+                    states.add("/".join(rel.parts[:-1]))
+            except Exception:
+                continue
+
+        return sorted(states)
+
     def clear_all(self):
         if self.markdown_dir.exists():
             shutil.rmtree(self.markdown_dir)
             self.markdown_dir.mkdir(parents=True, exist_ok=True)
-        
+        if self.documents_dir.exists():
+            shutil.rmtree(self.documents_dir)
+            self.documents_dir.mkdir(parents=True, exist_ok=True)
+
         self.rag_system.parent_store.clear_store()
         self.rag_system.vector_db.delete_collection(self.rag_system.collection_name)
         self.rag_system.vector_db.create_collection(self.rag_system.collection_name)

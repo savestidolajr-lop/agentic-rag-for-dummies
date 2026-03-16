@@ -15,8 +15,8 @@ def pdf_to_markdown(pdf_path, output_dir):
     output_path = Path(output_dir) / Path(doc.name).stem
     Path(output_path).with_suffix(".md").write_bytes(md_cleaned.encode('utf-8'))
 
-def pdfs_to_markdowns(path_pattern, overwrite: bool = False):
-    output_dir = Path(config.MARKDOWN_DIR)
+def pdfs_to_markdowns(path_pattern, overwrite: bool = False, output_dir: str | Path | None = None):
+    output_dir = Path(output_dir or config.MARKDOWN_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for pdf_path in map(Path, glob.glob(path_pattern)):
