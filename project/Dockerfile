@@ -5,6 +5,9 @@ ENV PYTHONUNBUFFERED=1
 ENV CARGO_HOME=/tmp/.cargo
 ENV RUSTUP_HOME=/tmp/.rustup
 
+# Ensure /usr/local/cargo is writable for rust-based builds (some build tools ignore CARGO_HOME)
+RUN mkdir -p /usr/local/cargo /usr/local/rustup && chown -R 1000:1000 /usr/local/cargo /usr/local/rustup
+
 # Run as non-root user in the container.
 RUN useradd -m -u 1000 user
 USER user
