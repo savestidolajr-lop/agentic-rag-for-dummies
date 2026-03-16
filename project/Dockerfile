@@ -1,6 +1,9 @@
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1
+# Ensure Rust/Cargo build cache is writable in container environments where /usr/local is read-only
+ENV CARGO_HOME=/tmp/.cargo
+ENV RUSTUP_HOME=/tmp/.rustup
 
 # Run as non-root user in the container.
 RUN useradd -m -u 1000 user
