@@ -262,7 +262,7 @@ def create_gradio_ui():
 
                 model_dropdown = gr.Dropdown(
                     choices=list(config.AVAILABLE_MODELS.keys()),
-                    value="GPT-5 Mini", label="Model",
+                    value="Claude Sonnet 4.6", label="Model",
                     elem_id="model-picker", interactive=True,
                 )
 
@@ -407,13 +407,12 @@ def create_gradio_ui():
 
         toggle_sidebar_btn.click(None, js="() => { document.getElementById('sidebar').classList.toggle('sidebar-collapsed'); }")
 
-        # ── Chat handler — submits async, returns immediately ─────────────────
+        # ── Chat handler — streams tokens directly to UI ──────────────────────
         def chat_handler_ui(message, chat_history, session_id, selected_state):
             row_upd, btn_upds, text_upds = _hidden_sugg
             no_files = gr.update(visible=False, value="")
 
             if not message or not message.strip():
-                # Early return: 17 items
                 yield chat_history, "", gr.update(), session_id, row_upd, *btn_upds, *text_upds, no_files, False, gr.update(), gr.update(), gr.update()
                 return
 
@@ -423,14 +422,40 @@ def create_gradio_ui():
             else:
                 rag_system.set_state_filter(None)
 
-            # Submit to background thread — returns session_id immediately
-            new_session_id = chat_interface.submit_async(message, session_id=session_id)
-            display, _ = _session_display(new_session_id)
+            streamer = chat_interface.stream_response(message, session_id=session_id)
+            _, new_session_id = next(streamer)  # saves user message, returns session_id immediately
+
             sessions = chat_interface.get_sessions()
             html = _render_sessions_html(sessions, active_id=new_session_id)
+            base_display = list(chat_history or []) + [{"role": "user", "content": message.strip()}]
 
-            # Normal submit yield: 17 items
-            yield display, "", gr.update(value=html), new_session_id, row_upd, *btn_upds, *text_upds, no_files, True, gr.update(active=True), gr.update(visible=False), gr.update(visible=True)
+            # Show thinking indicator while agent is working
+            yield (base_display + [{"role": "assistant", "content": _THINKING_HTML}],
+                   "", gr.update(value=html), new_session_id,
+                   row_upd, *btn_upds, *text_upds, no_files, False,
+                   gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
+
+            # Stream tokens as they arrive from aggregate_answers
+            partial_response = ""
+            for partial_response, _ in streamer:
+                if partial_response:
+                    display = base_display + [{"role": "assistant", "content": _clean_message(partial_response)}]
+                    yield (display, "", gr.update(), new_session_id,
+                           row_upd, *btn_upds, *text_upds, no_files, False,
+                           gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
+
+            # Final yield — restore send button, show suggestions and citations
+            _, options = _parse_options(partial_response)
+            row_upd2, btn_upds2, text_upds2 = _sugg_updates(options)
+            cited_html = _get_cited_html(partial_response)
+            files_upd = gr.update(visible=bool(cited_html), value=cited_html)
+            sessions = chat_interface.get_sessions()
+            html = _render_sessions_html(sessions, active_id=new_session_id)
+            final_display = base_display + [{"role": "assistant", "content": _clean_message(partial_response or "No response generated.")}]
+
+            yield (final_display, "", gr.update(value=html), new_session_id,
+                   row_upd2, *btn_upds2, *text_upds2, files_upd, False,
+                   gr.update(active=False), _send_show, _stop_hide)
 
         send_btn.click(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat], chat_outputs)
         user_input.submit(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat], chat_outputs)

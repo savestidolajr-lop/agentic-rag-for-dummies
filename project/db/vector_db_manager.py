@@ -13,15 +13,32 @@ class VectorDbManager:
         # Prefer connecting to a running Qdrant server (recommended for concurrency and stability).
         # If Qdrant isn't running, it will fall back to local embedded mode.
         try:
-            self.__client = QdrantClient(url=config.QDRANT_URL)
+            kwargs = {"url": config.QDRANT_URL}
+            if config.QDRANT_API_KEY:
+                kwargs["api_key"] = config.QDRANT_API_KEY
+            self.__client = QdrantClient(**kwargs)
             # Try a lightweight request to confirm connection
             self.__client.get_collections()
-        except Exception:
+            collections = self.__client.get_collections()
+            print(f"✅ Connected to Qdrant: {config.QDRANT_URL} ({len(collections.collections)} collections)")
+        except Exception as e:
             # Fallback: use local (binary-based) mode via storage path
+            print(f"⚠️  Qdrant remote connection failed ({e}), falling back to local storage.")
             self.__client = QdrantClient(path=config.QDRANT_DB_PATH)
 
         self.__dense_embeddings = HuggingFaceEmbeddings(model_name=config.DENSE_MODEL)
         self.__sparse_embeddings = FastEmbedSparse(model_name=config.SPARSE_MODEL)
+
+    def _ensure_payload_indexes(self, collection_name):
+        """Create payload indexes required for filtering. Safe to call if they already exist."""
+        try:
+            self.__client.create_payload_index(
+                collection_name=collection_name,
+                field_name="metadata.state",
+                field_schema=qmodels.PayloadSchemaType.KEYWORD,
+            )
+        except Exception:
+            pass  # Index already exists
 
     def create_collection(self, collection_name):
         if not self.__client.collection_exists(collection_name):
@@ -33,7 +50,9 @@ class VectorDbManager:
             )
             print(f"✓ Collection created: {collection_name}")
         else:
-            print(f"✓ Collection already exists: {collection_name}")
+            count = self.__client.count(collection_name).count
+            print(f"✓ Collection already exists: {collection_name} ({count} points)")
+        self._ensure_payload_indexes(collection_name)
 
     def delete_collection(self, collection_name):
         try:

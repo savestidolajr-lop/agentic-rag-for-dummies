@@ -54,7 +54,7 @@ class DocumentManager:
                     shutil.copy(doc_path, md_path)
                 else:
                     pdfs_to_markdowns(str(doc_path), overwrite=False, output_dir=target_dir)
-                parent_chunks, child_chunks = self.rag_system.chunker.create_chunks_single(md_path, state=state)
+                parent_chunks, child_chunks = self.rag_system.chunker.create_chunks_single(md_path, state=state, original_filename=Path(doc_path).name)
                 
                 if not child_chunks:
                     skipped += 1

@@ -40,18 +40,18 @@ class DocumentChuncker:
         
         return all_parent_chunks, all_child_chunks
 
-    def create_chunks_single(self, md_path, state: str | None = None):
+    def create_chunks_single(self, md_path, state: str | None = None, original_filename: str | None = None):
         doc_path = Path(md_path)
-        
+
         with open(doc_path, "r", encoding="utf-8") as f:
             parent_chunks = self.__parent_splitter.split_text(f.read())
-        
+
         merged_parents = self.__merge_small_parents(parent_chunks)
         split_parents = self.__split_large_parents(merged_parents)
         cleaned_parents = self.__clean_small_chunks(split_parents)
-        
+
         all_parent_chunks, all_child_chunks = [], []
-        self.__create_child_chunks(all_parent_chunks, all_child_chunks, cleaned_parents, doc_path, state)
+        self.__create_child_chunks(all_parent_chunks, all_child_chunks, cleaned_parents, doc_path, state, original_filename)
         return all_parent_chunks, all_child_chunks
 
     def __merge_small_parents(self, chunks):
@@ -130,13 +130,14 @@ class DocumentChuncker:
         
         return cleaned
 
-    def __create_child_chunks(self, all_parent_pairs, all_child_chunks, parent_chunks, doc_path, state: str | None = None):
+    def __create_child_chunks(self, all_parent_pairs, all_child_chunks, parent_chunks, doc_path, state: str | None = None, original_filename: str | None = None):
+        source_name = original_filename or doc_path.name
         for i, p_chunk in enumerate(parent_chunks):
             # Use state as part of the parent_id to avoid collisions across namespaces.
             state_prefix = (state or "all").replace("/", "_")
             parent_id = f"{state_prefix}_{doc_path.stem}_parent_{i}"
             p_chunk.metadata.update({
-                "source": doc_path.name,
+                "source": source_name,
                 "parent_id": parent_id,
                 "state": state or "all",
             })

@@ -1,5 +1,16 @@
 import sys
 import os
+import warnings
+
+# Suppress Pydantic serialization warning caused by LangChain's with_structured_output()
+# wrapper model having a `parsed: Optional[QueryAnalysis] = None` field that LangGraph's
+# checkpointer encounters during state serialization. This is a known LangChain/Pydantic v2
+# compatibility issue and does not affect functionality.
+warnings.filterwarnings(
+    "ignore",
+    message=".*PydanticSerializationUnexpectedValue.*parsed.*",
+    category=UserWarning,
+)
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -35,7 +46,7 @@ if __name__ == "__main__":
         button_secondary_border_color="#333",
     )
 
-    share = os.getenv("GRADIO_SHARE", "false").lower() in ("1", "true", "yes")
+    share = os.getenv("GRADIO_SHARE", "true").lower() in ("1", "true", "yes")
 
     # Render (and other platforms) provide the HTTP port via the PORT env var.
     port = int(os.getenv("PORT", "7860"))

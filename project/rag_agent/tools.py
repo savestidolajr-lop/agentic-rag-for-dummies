@@ -50,6 +50,7 @@ class ToolFactory:
             ])            
 
         except Exception as e:
+            print(f"❌ search_child_chunks error: {e}")
             return f"RETRIEVAL_ERROR: {str(e)}"
     
     def _retrieve_many_parent_chunks(self, parent_ids: List[str]) -> str:

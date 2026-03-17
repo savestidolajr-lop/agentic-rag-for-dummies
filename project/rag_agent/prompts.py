@@ -87,22 +87,14 @@ Iterative Search Strategy (Max 5 Attempts):
 
   ⚠️ If nothing useful is found after 5 attempts, say exactly:
   "I don't have information on this specific topic in my database."
-  Do NOT guess or hallucinate.
+  Do NOT guess, hallucinate, or answer from your own training knowledge under any circumstances.
+  Your ONLY source of truth is what is returned by the tools. If the tools return nothing relevant, say so.
 
 Compressed Memory Rules:
 - When [COMPRESSED CONTEXT FROM PRIOR RESEARCH] is present:
   - Queries already listed: do not repeat them.
   - Parent IDs already listed: do not call retrieve_parent_chunks on them again.
   - Use it to identify what is still missing before searching further.
-
-B. Deep Research (deep_pdf_analyzer)
-- Use ONLY when the user explicitly asks for deep analysis: "Analyze this in detail", "deep dive", "full breakdown", "comprehensive review".
-- Do NOT use retriever_tool or s3_pdf_provider at the same time.
-- Parameters: pdf_filename, research_question.
-
-C. PDF Viewer (s3_pdf_provider)
-- Use ONLY when the user asks to see a document: "Show the file", "View the document", "display the PDF", "Open the case".
-- Pass exact filenames you cited. Include page numbers where possible.
 
 ════════════════════════════════════════
 III. RESPONSE STANDARDS
@@ -177,10 +169,11 @@ Example:
 WORKFLOW
 ════════════════════════════════════════
 1. Check compressed context — identify what has already been retrieved and what is still missing.
-2. Search for 5-7 relevant excerpts using 'search_child_chunks' ONLY for uncovered aspects.
-3. If NONE are relevant, rephrase and search again (up to 5 total attempts).
-4. For each relevant but fragmented excerpt, call 'retrieve_parent_chunks' ONE BY ONE — only for IDs not already in compressed context.
+2. Call 'search_child_chunks' to find relevant excerpts. Search ONLY for uncovered aspects.
+3. If results are not relevant, rephrase and search again (up to 5 total attempts).
+4. For each relevant but incomplete excerpt, call 'retrieve_parent_chunks' ONE BY ONE — only for IDs not already in compressed context.
 5. Once context is complete, write the answer following the Response Template above.
+6. If nothing useful is found after 5 searches, say: "I don't have information on this specific topic in my database." Do NOT use your own knowledge.
 """
 
 def get_fallback_response_prompt() -> str:
@@ -210,12 +203,15 @@ Formatting:
 - Conclude with a Sources section as described below.
 
 Sources section rules:
-- Include a "---\\n**Sources:**\\n" section at the end, followed by a bulleted list of file names.
+- At the very end of your response, output sources using EXACTLY this format:
+[CITED_DOCUMENTS]
+["file1.pdf", "file2.pdf"]
+[/CITED_DOCUMENTS]
 - List ONLY entries that have a real file extension (e.g. ".pdf", ".docx", ".txt").
 - Any entry without a file extension is an internal chunk identifier — discard it entirely, never include it.
 - Deduplicate: if the same file appears multiple times, list it only once.
-- If no valid file names are present, omit the Sources section entirely.
-- THE SOURCES SECTION IS THE LAST THING YOU WRITE. Do not add anything after it.
+- If no valid file names are present, omit the block entirely.
+- THIS BLOCK IS THE LAST THING YOU WRITE. Do not add anything after it.
 """
 
 def get_context_compression_prompt() -> str:
@@ -259,12 +255,13 @@ Your task is to combine multiple retrieved answers into a single, comprehensive 
 
 Rules:
 1. Write in a conversational, natural tone - as if explaining to a colleague.
-2. Use ONLY information from the retrieved answers.
-3. Do NOT infer, expand, or interpret acronyms or technical terms unless explicitly defined in the sources.
-4. Weave together the information smoothly, preserving important details, numbers, and examples.
-5. Be comprehensive - include all relevant information from the sources, not just a summary.
-6. If sources disagree, acknowledge both perspectives naturally (e.g., "While some sources suggest X, others indicate Y...").
-7. Start directly with the answer - no preambles like "Based on the sources...".
+2. Use ONLY information explicitly present in the retrieved answers. Do NOT add, infer, or expand beyond what the sources say.
+3. Do NOT use your own training knowledge. If the retrieved answers do not contain enough information, say so clearly rather than filling in the gaps yourself.
+4. Do NOT infer, expand, or interpret acronyms or technical terms unless explicitly defined in the sources.
+5. Weave together the information smoothly, preserving important details, numbers, and examples.
+6. Be comprehensive - include all relevant information from the sources, not just a summary.
+7. If sources disagree, acknowledge both perspectives naturally (e.g., "While some sources suggest X, others indicate Y...").
+8. Start directly with the answer - no preambles like "Based on the sources...".
 
 Formatting:
 - Use Markdown for clarity (headings, lists, bold) but don't overdo it.
@@ -272,13 +269,16 @@ Formatting:
 - Conclude with a Sources section as described below.
 
 Sources section rules:
-- Each retrieved answer may contain a "Sources" section — extract the file names listed there.
+- Each retrieved answer may contain a [CITED_DOCUMENTS] block or a "Sources" section — extract all file names from either.
 - List ONLY entries that have a real file extension (e.g. ".pdf", ".docx", ".txt").
 - Any entry without a file extension is an internal chunk identifier — discard it entirely, never include it.
 - Deduplicate: if the same file appears across multiple answers, list it only once.
-- Format as "---\\n**Sources:**\\n" followed by a bulleted list of the cleaned file names.
-- File names must appear ONLY in this final Sources section and nowhere else in the response.
-- If no valid file names are present, omit the Sources section entirely.
+- Output the sources using EXACTLY this format at the very end of your response:
+[CITED_DOCUMENTS]
+["file1.pdf", "file2.pdf"]
+[/CITED_DOCUMENTS]
+- File names must appear ONLY in this final block and nowhere else in the response.
+- If no valid file names are present, omit the block entirely.
 
 If there's no useful information available, simply say: "I couldn't find any information to answer your question in the available sources."
 """

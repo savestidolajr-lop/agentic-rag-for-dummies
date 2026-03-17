@@ -11,6 +11,7 @@ MARKDOWN_DIR = os.path.join(_BASE_DIR, "markdown_docs")
 PARENT_STORE_PATH = os.path.join(_DATA_DIR, "parent_store")
 QDRANT_DB_PATH = os.path.join(_DATA_DIR, "qdrant_db")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
 DOCUMENTS_DIR = os.path.join(_DATA_DIR, "documents")
 CHECKPOINTS_DB_PATH = os.path.join(_DATA_DIR, "langgraph_checkpoints.db")
 
@@ -53,7 +54,7 @@ AVAILABLE_MODELS = {
 MAX_TOOL_CALLS = 8
 MAX_ITERATIONS = 10
 GRAPH_RECURSION_LIMIT = 50
-BASE_TOKEN_THRESHOLD = 2000
+BASE_TOKEN_THRESHOLD = 10000
 TOKEN_GROWTH_FACTOR = 0.9
 
 # --- Text Splitter Configuration ---

@@ -124,9 +124,12 @@ class RAGSystem:
         self._health_cache = None
         
     def initialize(self):
-        # Ensure Qdrant is running before attempting to create or access collections.
-        if not self._qdrant_started:
+        # Only attempt to start a local Qdrant process when no remote URL is configured.
+        is_remote = not config.QDRANT_URL.startswith("http://localhost") and not config.QDRANT_URL.startswith("http://127.0.0.1")
+        if not self._qdrant_started and not is_remote:
             self._qdrant_started = _attempt_start_qdrant(self._qdrant_config_path)
+        elif is_remote:
+            self._qdrant_started = True
 
         self.vector_db.create_collection(self.collection_name)
         collection = self.vector_db.get_collection(self.collection_name)

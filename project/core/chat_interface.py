@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessageChunk
 
 _PENDING = "__PENDING__"
 _INTERRUPTED = "⚠️ Response interrupted — please resend your message."
@@ -209,6 +209,40 @@ class ChatInterface:
             self._cancelled.discard(session_id)
         else:
             self._update_pending(session_id, response)
+
+    def stream_response(self, message: str, session_id: str | None = None):
+        """Stream response tokens as they arrive. Yields (partial_text, session_id) tuples."""
+        if not self.rag_system.agent_graph:
+            session_id = self._append_history("user", message.strip(), session_id=session_id)
+            self._append_history("assistant", "⚠️ System not initialized!", session_id=session_id)
+            yield "⚠️ System not initialized!", session_id
+            return
+
+        session_id = self._append_history("user", message.strip(), session_id=session_id)
+        yield "", session_id  # Signal session_id to caller before blocking on agent
+
+        full_response = ""
+        try:
+            for chunk, metadata in self.rag_system.agent_graph.stream(
+                {"messages": [HumanMessage(content=message.strip())]},
+                self.rag_system.get_config(thread_id=session_id),
+                stream_mode="messages",
+            ):
+                if isinstance(chunk, AIMessageChunk) and chunk.content:
+                    if metadata.get("langgraph_node") == "aggregate_answers":
+                        full_response += chunk.content
+                        yield full_response, session_id
+        except Exception as e:
+            full_response = f"❌ Error: {str(e)}"
+            yield full_response, session_id
+        finally:
+            self._append_history(
+                "assistant", full_response or "No response generated.", session_id=session_id
+            )
+            try:
+                self.rag_system.observability.flush()
+            except Exception:
+                pass
 
     # ── Legacy synchronous chat (kept for compatibility) ──────────────────────
 

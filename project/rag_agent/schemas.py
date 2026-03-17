@@ -1,7 +1,9 @@
 from typing import List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 class QueryAnalysis(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     is_clear: bool = Field(
         description="Indicates if the user's question is clear and answerable."
     )
