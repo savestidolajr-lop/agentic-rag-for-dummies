@@ -16,10 +16,12 @@ _OPTIONS_RE = re.compile(r'\[OPTIONS:\s*([^\]]+)\]', re.IGNORECASE)
 _CITED_RE   = re.compile(r'\[CITED_DOCUMENTS\](.*?)\[/CITED_DOCUMENTS\]', re.DOTALL)
 
 _THINKING_HTML = (
-    "Thinking"
+    "<span class='thinking-container'>"
+    "<span class='thinking-word-display'>Thinking</span>"
     "<span class='thinking-dot'>.</span>"
     "<span class='thinking-dot'>.</span>"
     "<span class='thinking-dot'>.</span>"
+    "</span>"
 )
 
 # ── Auto-highlight patterns for legal content ─────────────────────────────────
@@ -137,6 +139,74 @@ window.grDeleteSession = function(sid) {
 """
 
 _SIDEBAR_HEAD = f"<script>{_SIDEBAR_JS}</script>"
+
+_enter_js = """
+() => {
+    /* ── Enter to send ── */
+    function attachEnterHandler() {
+        const ta = document.querySelector('#user-input textarea');
+        if (!ta || ta._enterBound) return;
+        ta._enterBound = true;
+        ta.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const btn = document.querySelector('#send-btn button');
+                if (btn && !btn.disabled) btn.click();
+            }
+        });
+    }
+
+    /* ── Random thinking word cycler (single global interval) ── */
+    const _words = [
+        'Thinking','Searching','Analysing','Reading','Processing',
+        'Reasoning','Reviewing','Stewing','Herding','Deciphering',
+        'Wandering','Channeling','Considering','Ruminating','Sussing'
+    ];
+    let _lastWord = '';
+    function _rand() {
+        let w; do { w = _words[Math.floor(Math.random() * _words.length)]; } while (w === _lastWord);
+        return _lastWord = w;
+    }
+
+    setInterval(() => {
+        const el = document.querySelector('.thinking-word-display');
+        if (!el) return;
+        el.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(-5px)';
+        setTimeout(() => {
+            const el2 = document.querySelector('.thinking-word-display');
+            if (!el2) return;
+            el2.textContent = _rand();
+            el2.style.transition = 'none';
+            el2.style.transform = 'translateY(5px)';
+            el2.style.opacity = '0';
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                el2.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                el2.style.opacity = '1';
+                el2.style.transform = 'translateY(0)';
+            }));
+        }, 320);
+    }, 4000);
+
+    /* ── Auto-scroll activity steps to bottom on each update ── */
+    function scrollActivityToBottom() {
+        requestAnimationFrame(() => {
+            document.querySelectorAll('.activity-steps').forEach(el => {
+                el.scrollTop = el.scrollHeight;
+            });
+        });
+    }
+
+    /* ── Attach enter handler + activity scroller after any re-render ── */
+    attachEnterHandler();
+    const _obs = new MutationObserver(() => {
+        attachEnterHandler();
+        scrollActivityToBottom();
+    });
+    _obs.observe(document.body, { childList: true, subtree: true });
+}
+"""
 
 
 def create_gradio_ui():
@@ -314,30 +384,32 @@ def create_gradio_ui():
             # ── Sidebar ───────────────────────────────────────────────────
             with gr.Column(scale=1, min_width=240, elem_id="sidebar"):
 
-                gr.HTML('<div class="sidebar-header">Case Agent</div>')
+                toggle_sidebar_btn = gr.Button("☰", elem_id="toggle-sidebar-btn")
 
-                new_session_btn = gr.Button("＋  New chat", elem_id="new-chat-btn")
+                with gr.Column(elem_id="sidebar-body"):
+                    gr.HTML('<div class="sidebar-header">Case Agent</div>')
 
-                gr.HTML('<div class="sidebar-label">Recent chats</div>')
+                    new_session_btn = gr.Button("＋  New chat", elem_id="new-chat-btn")
 
-                session_list_html = gr.HTML("", elem_id="session-list")
-                active_session_id = gr.State(None)
-                # These stay in DOM (visible=True) but are hidden via CSS:
-                session_click_txt = gr.Textbox(value="", label="", elem_id="session-click-txt")
-                session_del_txt   = gr.Textbox(value="", label="", elem_id="session-del-txt")
+                    gr.HTML('<div class="sidebar-label">Recent chats</div>')
 
-                gr.HTML('<div class="sidebar-divider"></div>')
+                    session_list_html = gr.HTML("", elem_id="session-list")
+                    active_session_id = gr.State(None)
+                    # These stay in DOM (visible=True) but are hidden via CSS:
+                    session_click_txt = gr.Textbox(value="", label="", elem_id="session-click-txt")
+                    session_del_txt   = gr.Textbox(value="", label="", elem_id="session-del-txt")
 
-                admin_btn        = gr.Button("⚙  Admin Panel", elem_id="admin-btn")
-                history_nav_btn  = gr.Button("🕐  History",    elem_id="history-btn")
+                    gr.HTML('<div class="sidebar-divider"></div>')
 
-                health_md = gr.Markdown(format_health_status(), elem_id="health-md")
+                    admin_btn        = gr.Button("⚙  Admin Panel", elem_id="admin-btn")
+                    history_nav_btn  = gr.Button("🕐  History",    elem_id="history-btn")
+
+                    health_md = gr.Markdown(format_health_status(), elem_id="health-md")
 
             # ── Main area ─────────────────────────────────────────────────
             with gr.Column(scale=4, elem_id="main-area"):
 
                 with gr.Row(elem_id="main-topbar"):
-                    toggle_sidebar_btn = gr.Button("☰", elem_id="toggle-sidebar-btn", scale=0, min_width=36)
                     state_dropdown_chat = gr.Dropdown(
                         choices=get_state_choices(), value="All States",
                         allow_custom_value=True, label="State filter",
@@ -513,18 +585,31 @@ def create_gradio_ui():
 
         views = [chat_view, docs_view, history_view]
 
+        _ANIMATED_DOTS = (
+            "<span class='thinking-dot'>.</span>"
+            "<span class='thinking-dot'>.</span>"
+            "<span class='thinking-dot'>.</span>"
+        )
+
         def _render_activity(steps: list, done: bool = False) -> tuple:
-            if not steps:
+            if not steps or done:
                 return gr.update(visible=False, value="")
-            items = "".join(f'<div class="activity-step">{s}</div>' for s in steps)
-            open_attr = "" if done else "open"
+            items = []
+            for i, step in enumerate(steps):
+                is_last = (i == len(steps) - 1)
+                # Strip trailing static "..." so we can control them ourselves
+                text = step[:-3] if step.endswith("...") else step
+                if is_last:
+                    items.append(f'<div class="activity-step">{text}{_ANIMATED_DOTS}</div>')
+                else:
+                    items.append(f'<div class="activity-step activity-step-done">{text}</div>')
             html = f"""
-            <details {open_attr} class="activity-panel">
+            <details open class="activity-panel">
                 <summary class="activity-summary">
-                    {'✦ Agent steps' if done else '⟳ Agent working…'}
+                    ⟳ Agent working…
                     <span class="activity-count">{len(steps)}</span>
                 </summary>
-                <div class="activity-steps">{items}</div>
+                <div class="activity-steps">{"".join(items)}</div>
             </details>"""
             return gr.update(visible=True, value=html)
 
@@ -633,16 +718,16 @@ def create_gradio_ui():
             activity_steps = []
             try:
                 for partial_response, _, activity_steps in streamer:
-                    activity_upd = _render_activity(activity_steps, done=bool(partial_response))
+                    activity_upd = _render_activity(activity_steps)
                     if partial_response:
                         display = base_display + [{"role": "assistant", "content": _clean_message(partial_response)}]
                         yield (display, "", gr.update(), new_session_id,
-                               row_upd, *btn_upds, *text_upds, activity_upd, no_files, False,
+                               row_upd, *btn_upds, *text_upds, gr.update(), no_files, False,
                                gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
                     else:
-                        # Activity-only update (no text yet)
-                        yield (base_display + [{"role": "assistant", "content": _THINKING_HTML}],
-                               "", gr.update(), new_session_id,
+                        # Leave chatbot untouched (gr.update()) so the thinking word
+                        # element stays in the DOM and the JS cycler can update it
+                        yield (gr.update(), "", gr.update(), new_session_id,
                                row_upd, *btn_upds, *text_upds, activity_upd, no_files, False,
                                gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
             except Exception as e:
@@ -651,7 +736,6 @@ def create_gradio_ui():
             yield _final_yield(partial_response, new_session_id, activity_steps)
 
         send_btn.click(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat], chat_outputs)
-        user_input.submit(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat], chat_outputs)
 
         # Suggestion buttons
         def send_suggestion(txt, chat_history, session_id, selected_state):

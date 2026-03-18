@@ -2,27 +2,35 @@ from typing import List
 from langchain_core.tools import tool
 from db.parent_store_manager import ParentStoreManager
 from qdrant_client.http import models as qmodels
+from sentence_transformers import CrossEncoder
+import config
 
 class ToolFactory:
-    
+    _reranker: CrossEncoder | None = None  # shared across instances, loaded once
+
     def __init__(self, collection):
         self.collection = collection
         self.parent_store_manager = ParentStoreManager()
         self.state_filter = None
-    
+        if ToolFactory._reranker is None:
+            print(f"Loading reranker model: {config.RERANKER_MODEL}")
+            ToolFactory._reranker = CrossEncoder(config.RERANKER_MODEL)
+            print("✓ Reranker loaded")
+
     def set_state_filter(self, state: str | None):
         """Set a namespace/state filter used for retrieval."""
         self.state_filter = state
 
-    def _search_child_chunks(self, query: str, limit: int, state: str | None = None) -> str:
+    def _search_child_chunks(self, query: str, limit: int = 5, state: str | None = None) -> str:
         """Search for the top K most relevant child chunks.
-        
+
         Args:
             query: Search query string
-            limit: Maximum number of results to return
+            limit: Maximum number of results to return (default 5, capped at 10).
             state: Optional state/namespace filter.
         """
         try:
+            limit = max(1, min(limit, 10))  # guard against LLM passing extreme values
             qdrant_filter = None
             effective_state = state or self.state_filter
             if effective_state and effective_state.lower() not in ("all", "all states"):
@@ -33,13 +41,21 @@ class ToolFactory:
                     )]
                 )
 
-            results = self.collection.similarity_search(
+            # Over-fetch candidates for reranking
+            fetch_k = limit * config.RERANKER_FETCH_MULTIPLIER
+            candidates = self.collection.similarity_search(
                 query,
-                k=limit,
+                k=fetch_k,
                 filter=qdrant_filter,
             )
-            if not results:
+            if not candidates:
                 return "NO_RELEVANT_CHUNKS"
+
+            # Rerank using cross-encoder then trim to requested limit
+            pairs = [[query, doc.page_content] for doc in candidates]
+            scores = ToolFactory._reranker.predict(pairs)
+            ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
+            results = [doc for _, doc in ranked[:limit]]
 
             return "\n\n".join([
                 f"Parent ID: {doc.metadata.get('parent_id', '')}\n"
@@ -47,7 +63,7 @@ class ToolFactory:
                 f"State: {doc.metadata.get('state', '')}\n"
                 f"Content: {doc.page_content.strip()}"
                 for doc in results
-            ])            
+            ])
 
         except Exception as e:
             print(f"❌ search_child_chunks error: {e}")

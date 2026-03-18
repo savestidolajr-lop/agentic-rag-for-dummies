@@ -8,23 +8,30 @@ from utils import estimate_context_tokens
 from config import BASE_TOKEN_THRESHOLD, TOKEN_GROWTH_FACTOR
 
 def summarize_history(state: State, llm):
-    if len(state["messages"]) < 10:
-        return {}  # preserve existing summary — don't wipe it
-    
-    relevant_msgs = [
+    # Run every turn as long as there is at least one prior message (previous AI response)
+    prior_msgs = [
         msg for msg in state["messages"][:-1]
         if isinstance(msg, (HumanMessage, AIMessage)) and not getattr(msg, "tool_calls", None)
     ]
+    original_query = state.get("originalQuery", "")
+    existing_summary = state.get("conversation_summary", "").strip()
 
-    if not relevant_msgs:
-        return {"conversation_summary": ""}
-    
-    conversation = "Conversation history:\n"
-    for msg in relevant_msgs[-10:]:
+    if not prior_msgs and not original_query and not existing_summary:
+        return {}
+
+    conversation = ""
+    if existing_summary:
+        conversation += f"Previous summary:\n{existing_summary}\n\n"
+    conversation += "Latest exchange:\n"
+    if original_query:
+        conversation += f"User: {original_query}\n"
+    for msg in prior_msgs[-4:]:
         role = "User" if isinstance(msg, HumanMessage) else "Assistant"
-        conversation += f"{role}: {msg.content}\n"
+        conversation += f"{role}: {msg.content[:600]}\n"
 
-    summary_response = llm.with_config(temperature=0.2).invoke([SystemMessage(content=get_conversation_summary_prompt()), HumanMessage(content=conversation)])
+    summary_response = llm.with_config(temperature=0.2).invoke(
+        [SystemMessage(content=get_conversation_summary_prompt()), HumanMessage(content=conversation)]
+    )
     return {"conversation_summary": summary_response.content, "agent_answers": [{"__reset__": True}]}
 
 def rewrite_query(state: State, llm):
@@ -201,6 +208,10 @@ def aggregate_answers(state: State, llm):
         return {"messages": [AIMessage(content="No answers were generated.")]}
 
     sorted_answers = sorted(state["agent_answers"], key=lambda x: x["index"])
+
+    # Single sub-question — pass answer through directly, no extra LLM call needed
+    if len(sorted_answers) == 1:
+        return {"messages": [AIMessage(content=sorted_answers[0]["answer"])]}
 
     formatted_answers = ""
     for i, ans in enumerate(sorted_answers, start=1):

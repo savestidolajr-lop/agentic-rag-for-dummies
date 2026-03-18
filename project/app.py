@@ -25,7 +25,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 import gradio as gr
 from ui.css import custom_css
-from ui.gradio_app import create_gradio_ui, _SIDEBAR_HEAD
+from ui.gradio_app import create_gradio_ui, _SIDEBAR_HEAD, _enter_js
 import config
 
 if __name__ == "__main__":
@@ -63,6 +63,7 @@ if __name__ == "__main__":
         theme=theme,
         share=share,
         head=_SIDEBAR_HEAD,
+        js=_enter_js,
         allowed_paths=[config.DOCUMENTS_DIR],
         server_name=host,
         server_port=port,

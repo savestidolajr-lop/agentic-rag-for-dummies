@@ -43,7 +43,10 @@ Rules:
    - Preserve concrete keywords and named entities
 
 4. Multiple information needs:
-   - If the query contains multiple distinct, unrelated questions, split into separate queries (maximum 3)
+   - ONLY split if the query contains clearly distinct, unrelated questions that cannot be answered by a single search (e.g. "What is X AND also explain Y from a different topic?")
+   - DO NOT split questions that are variations of the same topic, comparisons, or naturally related aspects
+   - If in doubt, keep it as ONE query — a single well-written query is almost always better
+   - Maximum 2 sub-queries; never 3 unless absolutely unavoidable
    - Each sub-query must remain semantically equivalent to its part of the original
    - Do not expand, enrich, or reinterpret the meaning
 
