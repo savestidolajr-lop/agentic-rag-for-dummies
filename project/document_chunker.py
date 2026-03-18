@@ -2,6 +2,7 @@ import os
 import glob
 import config
 from pathlib import Path
+from langchain_core.documents import Document
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 class DocumentChuncker:
@@ -90,18 +91,36 @@ class DocumentChuncker:
 
     def __split_large_parents(self, chunks):
         split_chunks = []
-        
+
         for chunk in chunks:
             if len(chunk.page_content) <= self.__max_parent_size:
                 split_chunks.append(chunk)
-            else:
-                splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=self.__max_parent_size,
-                    chunk_overlap=config.CHILD_CHUNK_OVERLAP
-                )
-                sub_chunks = splitter.split_documents([chunk])
-                split_chunks.extend(sub_chunks)
-        
+                continue
+
+            # Split on paragraph boundaries first to keep legal provisions intact.
+            # Only fall back to character splitting if a single paragraph still exceeds the limit.
+            paragraphs = chunk.page_content.split("\n\n")
+            current_text = ""
+            for para in paragraphs:
+                candidate = (current_text + "\n\n" + para).lstrip("\n") if current_text else para
+                if len(candidate) <= self.__max_parent_size:
+                    current_text = candidate
+                else:
+                    if current_text:
+                        split_chunks.append(Document(page_content=current_text, metadata=chunk.metadata.copy()))
+                    # Paragraph itself exceeds limit — character-split as last resort
+                    if len(para) > self.__max_parent_size:
+                        splitter = RecursiveCharacterTextSplitter(
+                            chunk_size=self.__max_parent_size,
+                            chunk_overlap=config.CHILD_CHUNK_OVERLAP,
+                        )
+                        split_chunks.extend(splitter.split_documents([Document(page_content=para, metadata=chunk.metadata.copy())]))
+                        current_text = ""
+                    else:
+                        current_text = para
+            if current_text:
+                split_chunks.append(Document(page_content=current_text, metadata=chunk.metadata.copy()))
+
         return split_chunks
 
     def __clean_small_chunks(self, chunks):

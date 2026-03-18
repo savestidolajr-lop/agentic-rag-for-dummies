@@ -9,7 +9,7 @@ from config import BASE_TOKEN_THRESHOLD, TOKEN_GROWTH_FACTOR
 
 def summarize_history(state: State, llm):
     if len(state["messages"]) < 10:
-        return {"conversation_summary": ""}
+        return {}  # preserve existing summary — don't wipe it
     
     relevant_msgs = [
         msg for msg in state["messages"][:-1]
@@ -30,8 +30,22 @@ def summarize_history(state: State, llm):
 def rewrite_query(state: State, llm):
     last_message = state["messages"][-1]
     conversation_summary = state.get("conversation_summary", "")
+    state_filter = state.get("state_filter", "").strip()
 
-    context_section = (f"Conversation Context:\n{conversation_summary}\n" if conversation_summary.strip() else "") + f"User Query:\n{last_message.content}\n"
+    state_note = f"Active State Filter: {state_filter} — searches are restricted to {state_filter} documents only.\n" if state_filter else ""
+
+    if conversation_summary.strip():
+        conv_context = f"Conversation Context:\n{conversation_summary}\n"
+    else:
+        # Fall back to recent raw messages when no summary exists yet
+        prior = [m for m in state["messages"][:-1] if isinstance(m, (HumanMessage, AIMessage)) and not getattr(m, "tool_calls", None)][-4:]
+        if prior:
+            lines = "".join(f"{'User' if isinstance(m, HumanMessage) else 'Assistant'}: {m.content[:400]}\n" for m in prior)
+            conv_context = f"Recent conversation:\n{lines}\n"
+        else:
+            conv_context = ""
+
+    context_section = state_note + conv_context + f"User Query:\n{last_message.content}\n"
 
     llm_with_structure = llm.with_config(temperature=0.1).with_structured_output(QueryAnalysis)
     response = llm_with_structure.invoke([SystemMessage(content=get_rewrite_query_prompt()), HumanMessage(content=context_section)])
@@ -49,7 +63,9 @@ def request_clarification(state: State):
 # --- Agent Nodes ---
 def orchestrator(state: AgentState, llm_with_tools):
     context_summary = state.get("context_summary", "").strip()
-    sys_msg = SystemMessage(content=get_orchestrator_prompt())
+    state_filter = state.get("state_filter", "").strip()
+    state_note = f"\n\n[ACTIVE STATE FILTER: {state_filter} — All searches are restricted to {state_filter} documents. The user has already selected this state. Do NOT ask which state they want.]" if state_filter else ""
+    sys_msg = SystemMessage(content=get_orchestrator_prompt() + state_note)
     summary_injection = (
         [HumanMessage(content=f"[COMPRESSED CONTEXT FROM PRIOR RESEARCH]\n\n{context_summary}")]
         if context_summary else []
@@ -102,6 +118,13 @@ def should_compress_context(state: AgentState) -> Command[Literal["compress_cont
             for tc in msg.tool_calls:
                 if tc["name"] == "retrieve_parent_chunks":
                     raw = tc["args"].get("parent_id") or tc["args"].get("id") or tc["args"].get("ids") or []
+                    if isinstance(raw, str):
+                        new_ids.add(f"parent::{raw}")
+                    else:
+                        new_ids.update(f"parent::{r}" for r in raw)
+
+                elif tc["name"] == "retrieve_parent_chunks_batch":
+                    raw = tc["args"].get("parent_ids") or []
                     if isinstance(raw, str):
                         new_ids.add(f"parent::{raw}")
                     else:

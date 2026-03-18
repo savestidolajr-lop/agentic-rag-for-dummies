@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
-from langchain_core.messages import HumanMessage, AIMessageChunk
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, ToolMessage
 
 _PENDING = "__PENDING__"
 _INTERRUPTED = "⚠️ Response interrupted — please resend your message."
@@ -210,48 +210,124 @@ class ChatInterface:
         else:
             self._update_pending(session_id, response)
 
-    def stream_response(self, message: str, session_id: str | None = None):
-        """Stream response tokens as they arrive. Yields (partial_text, session_id) tuples."""
+    @staticmethod
+    def _format_tool_step(tool_acc: dict) -> str | None:
+        """Build a human-readable activity string from accumulated tool_call_chunks."""
+        import json
+        for tc_info in tool_acc.values():
+            name = tc_info.get("name", "")
+            try:
+                args = json.loads(tc_info.get("args", "{}"))
+            except Exception:
+                args = {}
+            if name == "search_child_chunks":
+                query = args.get("query", "")
+                return f'🔍 Searched: <em>"{query[:100]}"</em>' if query else "🔍 Search completed"
+            if name == "retrieve_parent_chunks":
+                return "📄 Retrieved document chunk"
+            if name == "retrieve_parent_chunks_batch":
+                raw = args.get("parent_ids") or []
+                count = len(raw) if isinstance(raw, list) else 1
+                return f"📄 Retrieved {count} document chunk{'s' if count != 1 else ''}"
+        return None
+
+    def stream_response(self, message: str, session_id: str | None = None, state_filter: str | None = None):
+        """Stream response tokens. Yields (partial_text, session_id, activity_steps) tuples."""
         if not self.rag_system.agent_graph:
             session_id = self._append_history("user", message.strip(), session_id=session_id)
             self._append_history("assistant", "⚠️ System not initialized!", session_id=session_id)
-            yield "⚠️ System not initialized!", session_id
+            yield "⚠️ System not initialized!", session_id, []
             return
 
         session_id = self._append_history("user", message.strip(), session_id=session_id)
-        yield "", session_id  # Signal session_id to caller before blocking on agent
+        yield "", session_id, []  # Signal session_id to caller before blocking on agent
 
         full_response = ""
         last_state = None
+        activity_steps: list[str] = []
+        active_filter = (state_filter or "").strip()
+        active_filter = "" if active_filter.lower() in ("all states", "all", "") else active_filter
+        graph_input = {"messages": [HumanMessage(content=message.strip())]}
+        if active_filter:
+            graph_input["state_filter"] = active_filter
+
+        _tool_acc: dict = {}   # accumulates tool_call_chunks by index
+        _prev_node: str = ""
+        _orchestrator_visits: int = 0
         try:
-            for mode, data in self.rag_system.agent_graph.stream(
-                {"messages": [HumanMessage(content=message.strip())]},
+            for namespace, mode, data in self.rag_system.agent_graph.stream(
+                graph_input,
                 self.rag_system.get_config(thread_id=session_id),
                 stream_mode=["messages", "values"],
+                subgraphs=True,
             ):
                 if mode == "messages":
                     chunk, metadata = data
+                    node = metadata.get("langgraph_node", "")
+
+                    # Fire activity step once per node *entry* (when node changes)
+                    if node and node != _prev_node:
+                        if node == "rewrite_query":
+                            activity_steps = activity_steps + ["🧠 Analysing your question..."]
+                            yield "", session_id, activity_steps
+                        elif node == "orchestrator":
+                            _orchestrator_visits += 1
+                            if _orchestrator_visits == 1:
+                                activity_steps = activity_steps + ["📋 Planning search strategy..."]
+                            else:
+                                activity_steps = activity_steps + ["🔄 Reviewing findings, refining search..."]
+                            yield "", session_id, activity_steps
+                        elif node == "compress_context":
+                            activity_steps = activity_steps + ["🗜 Consolidating research context..."]
+                            yield "", session_id, activity_steps
+                        elif node == "aggregate_answers":
+                            activity_steps = activity_steps + ["✍️ Writing response..."]
+                            yield "", session_id, activity_steps
+                        _prev_node = node
+
+                    # Accumulate streaming tool-call argument fragments
+                    if hasattr(chunk, "tool_call_chunks") and chunk.tool_call_chunks:
+                        for tc in chunk.tool_call_chunks:
+                            idx = tc.get("index", 0)
+                            if tc.get("name"):
+                                _tool_acc[idx] = {"name": tc["name"], "args": ""}
+                            if idx in _tool_acc and tc.get("args"):
+                                _tool_acc[idx]["args"] += tc["args"]
+
+                    # ToolMessage = tool finished → build activity step from accumulated call
+                    if isinstance(chunk, ToolMessage):
+                        step = self._format_tool_step(_tool_acc)
+                        _tool_acc.clear()
+                        if step:
+                            activity_steps = activity_steps + [step]
+                            if not full_response:
+                                yield "", session_id, activity_steps
+
+                    # Final answer streaming
                     if isinstance(chunk, AIMessageChunk) and chunk.content:
                         if metadata.get("langgraph_node") == "aggregate_answers":
                             full_response += chunk.content
-                            yield full_response, session_id
-                elif mode == "values":
-                    last_state = data
+                            yield full_response, session_id, activity_steps
 
-            # Fallback: if token streaming produced nothing, extract from final state
+                elif mode == "values":
+                    if not namespace:  # root state only — used for fallback extraction
+                        last_state = data
+
+            # Fallback: if token streaming produced nothing, extract from final root state
             if not full_response and last_state:
                 msgs = last_state.get("messages", [])
                 for msg in reversed(msgs):
                     if (hasattr(msg, "content") and msg.content
                             and not getattr(msg, "tool_calls", None)
-                            and not isinstance(msg, HumanMessage)):
+                            and not isinstance(msg, HumanMessage)
+                            and not isinstance(msg, AIMessageChunk)):
                         full_response = msg.content
-                        yield full_response, session_id
+                        yield full_response, session_id, activity_steps
                         break
 
         except Exception as e:
             full_response = f"❌ Error: {str(e)}"
-            yield full_response, session_id
+            yield full_response, session_id, activity_steps
         finally:
             self._append_history(
                 "assistant", full_response or "No response generated.", session_id=session_id

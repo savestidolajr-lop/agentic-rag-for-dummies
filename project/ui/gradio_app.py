@@ -5,6 +5,12 @@ from pathlib import Path
 from core.chat_interface import ChatInterface
 from core.document_manager import DocumentManager
 from core.rag_system import RAGSystem
+from core import admin_config
+from rag_agent.prompts import (
+    get_orchestrator_prompt,
+    get_aggregation_prompt,
+    get_fallback_response_prompt,
+)
 
 _OPTIONS_RE = re.compile(r'\[OPTIONS:\s*([^\]]+)\]', re.IGNORECASE)
 _CITED_RE   = re.compile(r'\[CITED_DOCUMENTS\](.*?)\[/CITED_DOCUMENTS\]', re.DOTALL)
@@ -322,14 +328,6 @@ def create_gradio_ui():
 
                 gr.HTML('<div class="sidebar-divider"></div>')
 
-                model_dropdown = gr.Dropdown(
-                    choices=list(config.AVAILABLE_MODELS.keys()),
-                    value="Claude Sonnet 4.6", label="Model",
-                    elem_id="model-picker", interactive=True,
-                )
-
-                gr.HTML('<div class="sidebar-divider"></div>')
-
                 admin_btn        = gr.Button("⚙  Admin Panel", elem_id="admin-btn")
                 history_nav_btn  = gr.Button("🕐  History",    elem_id="history-btn")
 
@@ -356,6 +354,7 @@ def create_gradio_ui():
                         placeholder="Ask me anything about your documents.",
                     )
 
+                    agent_activity = gr.HTML("", visible=False, elem_id="agent-activity")
                     cited_files = gr.HTML("", visible=False, elem_id="cited-files")
 
                     with gr.Row(visible=False, elem_id="sugg-row") as sugg_row:
@@ -373,67 +372,124 @@ def create_gradio_ui():
                         send_btn = gr.Button("⬆", variant="primary", scale=0, elem_id="send-btn")
                         stop_btn = gr.Button("⏹", variant="stop",    scale=0, elem_id="stop-btn", visible=False)
 
-                    gr.HTML('<div style="text-align:center;font-size:12px;color:#555;padding:6px 0;">AI can make mistakes. Please double-check responses.</div>')
+                    with gr.Row(elem_id="input-meta-row"):
+                        model_dropdown = gr.Dropdown(
+                            choices=list(config.AVAILABLE_MODELS.keys()),
+                            value="Claude Haiku 4.5",
+                            container=False, show_label=False,
+                            elem_id="model-picker-inline", interactive=True,
+                            scale=0, min_width=180,
+                        )
 
                 # ── Admin Panel ────────────────────────────────────────
                 with gr.Column(visible=False) as docs_view:
 
-                    gr.HTML('<div class="view-title">Admin Panel — Documents</div>')
+                    gr.HTML('<div class="view-title">Admin Panel</div>')
 
-                    with gr.Row():
-                        state_dropdown = gr.Dropdown(
-                            label="Upload to State", choices=get_state_choices(),
-                            value="All States", allow_custom_value=True, interactive=True,
-                        )
-                    files_input = gr.File(file_count="multiple", type="filepath", height=140, show_label=False)
-                    add_btn = gr.Button("Add Documents", variant="primary")
+                    with gr.Tabs(elem_id="admin-tabs"):
 
-                    gr.HTML('<div style="margin-top:20px;margin-bottom:8px;font-weight:600;color:#ccc;">Indexed Documents</div>')
+                        # ── Tab 1: Documents ───────────────────────────
+                        with gr.TabItem("📄 Documents"):
 
-                    with gr.Row():
-                        file_search = gr.Textbox(
-                            placeholder="Search by filename...",
-                            show_label=False, scale=3, elem_id="file-search"
-                        )
-                        file_state_filter = gr.Dropdown(
-                            choices=["All States"] + DEFAULT_STATE_CHOICES,
-                            value="All States", show_label=False, scale=1,
-                            elem_id="file-state-filter"
-                        )
-                        refresh_docs_btn = gr.Button("↻ Refresh", scale=0, min_width=90)
+                            with gr.Row():
+                                state_dropdown = gr.Dropdown(
+                                    label="Upload to State", choices=get_state_choices(),
+                                    value="All States", allow_custom_value=True, interactive=True,
+                                )
+                            files_input = gr.File(file_count="multiple", type="filepath", height=140, show_label=False)
+                            add_btn = gr.Button("Add Documents", variant="primary")
 
-                    file_table = gr.HTML(value=render_file_table())
-                    file_page = gr.State(0)
-                    with gr.Row(elem_id="pagination-row"):
-                        prev_btn = gr.Button("← Prev", size="sm", scale=0, min_width=80)
-                        page_info = gr.Markdown("Page 1", elem_id="page-info")
-                        next_btn = gr.Button("Next →", size="sm", scale=0, min_width=80)
+                            gr.HTML('<div style="margin-top:20px;margin-bottom:8px;font-weight:600;color:#ccc;">Indexed Documents</div>')
 
-                    # ── Danger zone accordion (collapsed by default) ───────────
-                    with gr.Accordion("Danger Zone", open=False, elem_id="danger-zone-accordion"):
-                        clear_docs_btn = gr.Button("🗑 Clear All Documents", elem_id="clear-all-btn")
+                            with gr.Row():
+                                file_search = gr.Textbox(
+                                    placeholder="Search by filename...",
+                                    show_label=False, scale=3, elem_id="file-search"
+                                )
+                                file_state_filter = gr.Dropdown(
+                                    choices=["All States"] + DEFAULT_STATE_CHOICES,
+                                    value="All States", show_label=False, scale=1,
+                                    elem_id="file-state-filter"
+                                )
+                                refresh_docs_btn = gr.Button("↻ Refresh", scale=0, min_width=90)
 
-                    # ── Confirmation panel (hidden until Clear All is clicked) ──
-                    with gr.Column(visible=False, elem_id="confirm-delete-panel") as confirm_panel:
-                        gr.HTML("""
-                        <div style="background:#2a0a0a;border:1px solid #8b2020;border-radius:10px;padding:16px 18px;margin-top:12px;">
-                            <div style="color:#ff6b6b;font-size:15px;font-weight:700;margin-bottom:6px;">⚠️ Danger Zone</div>
-                            <div style="color:#ccc;font-size:13px;line-height:1.5;">
-                                This will permanently delete <strong style="color:#fff;">all uploaded documents</strong>,
-                                all indexed vectors in the database, and all stored chunks.<br>
-                                <span style="color:#ff9999;">This action cannot be undone.</span>
-                            </div>
-                        </div>
-                        """)
-                        confirm_input = gr.Textbox(
-                            placeholder='Type  DELETE  to confirm',
-                            show_label=False,
-                            elem_id="confirm-delete-input",
-                            max_lines=1,
-                        )
-                        with gr.Row():
-                            confirm_delete_btn = gr.Button("Confirm Delete", variant="stop", scale=1, elem_id="confirm-delete-confirm-btn")
-                            cancel_delete_btn  = gr.Button("Cancel", scale=1, elem_id="confirm-delete-cancel-btn")
+                            file_table = gr.HTML(value=render_file_table())
+                            file_page = gr.State(0)
+                            with gr.Row(elem_id="pagination-row"):
+                                prev_btn = gr.Button("← Prev", size="sm", scale=0, min_width=80)
+                                page_info = gr.Markdown("Page 1", elem_id="page-info")
+                                next_btn = gr.Button("Next →", size="sm", scale=0, min_width=80)
+
+                            # ── Danger zone ───────────────────────────
+                            with gr.Accordion("Danger Zone", open=False, elem_id="danger-zone-accordion"):
+                                reindex_btn    = gr.Button("🔄 Re-index All Documents", elem_id="reindex-btn")
+                                reindex_status = gr.Markdown("", elem_id="reindex-status")
+                                clear_docs_btn = gr.Button("🗑 Clear All Documents", elem_id="clear-all-btn")
+
+                            with gr.Column(visible=False, elem_id="confirm-delete-panel") as confirm_panel:
+                                gr.HTML("""
+                                <div style="background:#2a0a0a;border:1px solid #8b2020;border-radius:10px;padding:16px 18px;margin-top:12px;">
+                                    <div style="color:#ff6b6b;font-size:15px;font-weight:700;margin-bottom:6px;">⚠️ Danger Zone</div>
+                                    <div style="color:#ccc;font-size:13px;line-height:1.5;">
+                                        This will permanently delete <strong style="color:#fff;">all uploaded documents</strong>,
+                                        all indexed vectors in the database, and all stored chunks.<br>
+                                        <span style="color:#ff9999;">This action cannot be undone.</span>
+                                    </div>
+                                </div>
+                                """)
+                                confirm_input = gr.Textbox(
+                                    placeholder='Type  DELETE  to confirm',
+                                    show_label=False,
+                                    elem_id="confirm-delete-input",
+                                    max_lines=1,
+                                )
+                                with gr.Row():
+                                    confirm_delete_btn = gr.Button("Confirm Delete", variant="stop", scale=1, elem_id="confirm-delete-confirm-btn")
+                                    cancel_delete_btn  = gr.Button("Cancel", scale=1, elem_id="confirm-delete-cancel-btn")
+
+                        # ── Tab 2: AI Settings ─────────────────────────
+                        with gr.TabItem("🤖 AI Settings"):
+
+                            gr.HTML('<div style="color:#888;font-size:12px;margin-bottom:16px;">Changes apply immediately to the next query. Leave a prompt field empty to use the system default.</div>')
+
+                            with gr.Row():
+                                ai_temperature = gr.Slider(
+                                    minimum=0.0, maximum=1.0, step=0.05,
+                                    value=admin_config.get("temperature", config.LLM_TEMPERATURE),
+                                    label="Temperature",
+                                    info="0 = precise / deterministic   ·   1 = creative / varied",
+                                )
+                                ai_max_tools = gr.Slider(
+                                    minimum=1, maximum=15, step=1,
+                                    value=admin_config.get("max_tool_calls", config.MAX_TOOL_CALLS),
+                                    label="Max Tool Calls",
+                                    info="Max search attempts per query before fallback",
+                                )
+
+                            ai_orchestrator_prompt = gr.Textbox(
+                                label="Orchestrator Prompt  (core AI personality & rules)",
+                                value=get_orchestrator_prompt(),
+                                lines=18, max_lines=40,
+                                placeholder="Leave empty to use system default...",
+                            )
+                            ai_aggregation_prompt = gr.Textbox(
+                                label="Aggregation Prompt  (how multiple answers are combined)",
+                                value=get_aggregation_prompt(),
+                                lines=12, max_lines=30,
+                                placeholder="Leave empty to use system default...",
+                            )
+                            ai_fallback_prompt = gr.Textbox(
+                                label="Fallback Response Prompt  (when max searches are reached)",
+                                value=get_fallback_response_prompt(),
+                                lines=10, max_lines=20,
+                                placeholder="Leave empty to use system default...",
+                            )
+
+                            ai_settings_status = gr.Markdown("", elem_id="ai-settings-status")
+
+                            with gr.Row():
+                                ai_save_btn    = gr.Button("💾 Save Settings", variant="primary", scale=2)
+                                ai_reset_btn   = gr.Button("↺ Reset to Defaults", scale=1)
 
                 # ── History view ───────────────────────────────────────
                 with gr.Column(visible=False) as history_view:
@@ -447,6 +503,8 @@ def create_gradio_ui():
                         refresh_history_btn = gr.Button("Refresh")
                         clear_history_btn   = gr.Button("Clear History", variant="stop")
 
+                gr.HTML('<div id="input-disclaimer">AI can make mistakes. Please double-check responses.</div>')
+
         # ── Timer — polls active session every 2 s for background responses ──
         # Starts inactive; activated only when a message is in-flight
         timer = gr.Timer(value=2.0, active=False)
@@ -455,13 +513,27 @@ def create_gradio_ui():
 
         views = [chat_view, docs_view, history_view]
 
+        def _render_activity(steps: list, done: bool = False) -> tuple:
+            if not steps:
+                return gr.update(visible=False, value="")
+            items = "".join(f'<div class="activity-step">{s}</div>' for s in steps)
+            open_attr = "" if done else "open"
+            html = f"""
+            <details {open_attr} class="activity-panel">
+                <summary class="activity-summary">
+                    {'✦ Agent steps' if done else '⟳ Agent working…'}
+                    <span class="activity-count">{len(steps)}</span>
+                </summary>
+                <div class="activity-steps">{items}</div>
+            </details>"""
+            return gr.update(visible=True, value=html)
+
         # chat_outputs: chatbot, input, session_list_html, active_session_id, sugg_row,
-        #               btns×4, texts×4, files, was_pending, timer, send_btn, stop_btn
-        # Total: 1+1+1+1+1+4+4+1+1+1+1+1 = 17
+        #               btns×4, texts×4, agent_activity, files, was_pending, timer, send_btn, stop_btn
         chat_outputs = (
             [chatbot, user_input, session_list_html, active_session_id, sugg_row]
             + sugg_btns + sugg_texts
-            + [cited_files, was_pending, timer, send_btn, stop_btn]
+            + [agent_activity, cited_files, was_pending, timer, send_btn, stop_btn]
         )
 
         def _sugg_updates(options):
@@ -490,7 +562,15 @@ def create_gradio_ui():
         def show_chat():
             return gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
         def show_docs():
-            return gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
+            admin_config.load()
+            return (
+                gr.update(visible=False), gr.update(visible=True), gr.update(visible=False),
+                admin_config.get("temperature", config.LLM_TEMPERATURE),
+                admin_config.get("max_tool_calls", config.MAX_TOOL_CALLS),
+                get_orchestrator_prompt(),
+                get_aggregation_prompt(),
+                get_fallback_response_prompt(),
+            )
         def show_history():
             return gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)
 
@@ -510,9 +590,10 @@ def create_gradio_ui():
         def chat_handler_ui(message, chat_history, session_id, selected_state):
             row_upd, btn_upds, text_upds = _hidden_sugg
             no_files = gr.update(visible=False, value="")
+            no_activity = gr.update(visible=False, value="")
 
             if not message or not message.strip():
-                yield chat_history, "", gr.update(), session_id, row_upd, *btn_upds, *text_upds, no_files, False, gr.update(), gr.update(), gr.update()
+                yield chat_history, "", gr.update(), session_id, row_upd, *btn_upds, *text_upds, no_activity, no_files, False, gr.update(), gr.update(), gr.update()
                 return
 
             # Apply state filter
@@ -521,44 +602,53 @@ def create_gradio_ui():
             else:
                 rag_system.set_state_filter(None)
 
-            streamer = chat_interface.stream_response(message, session_id=session_id)
-            _, new_session_id = next(streamer)  # saves user message, returns session_id immediately
+            streamer = chat_interface.stream_response(message, session_id=session_id, state_filter=selected_state)
+            _, new_session_id, _ = next(streamer)  # saves user message, returns session_id immediately
 
             sessions = chat_interface.get_sessions()
             html = _render_sessions_html(sessions, active_id=new_session_id)
             base_display = list(chat_history or []) + [{"role": "user", "content": message.strip()}]
 
-            def _final_yield(partial_response, new_session_id):
+            def _final_yield(partial_response, new_session_id, activity_steps):
                 _, options = _parse_options(partial_response)
                 row_upd2, btn_upds2, text_upds2 = _sugg_updates(options)
                 cited_html = _get_cited_html(partial_response)
                 files_upd = gr.update(visible=bool(cited_html), value=cited_html)
+                activity_upd = _render_activity(activity_steps, done=True)
                 sessions = chat_interface.get_sessions()
                 html = _render_sessions_html(sessions, active_id=new_session_id)
                 final_display = base_display + [{"role": "assistant", "content": _clean_message(partial_response or "No response generated.")}]
                 return (final_display, "", gr.update(value=html), new_session_id,
-                        row_upd2, *btn_upds2, *text_upds2, files_upd, False,
+                        row_upd2, *btn_upds2, *text_upds2, activity_upd, files_upd, False,
                         gr.update(active=False), _send_show, _stop_hide)
 
             # Show thinking indicator while agent is working
             yield (base_display + [{"role": "assistant", "content": _THINKING_HTML}],
                    "", gr.update(value=html), new_session_id,
-                   row_upd, *btn_upds, *text_upds, no_files, False,
+                   row_upd, *btn_upds, *text_upds, no_activity, no_files, False,
                    gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
 
-            # Stream tokens as they arrive from aggregate_answers
+            # Stream tokens and activity steps as they arrive
             partial_response = ""
+            activity_steps = []
             try:
-                for partial_response, _ in streamer:
+                for partial_response, _, activity_steps in streamer:
+                    activity_upd = _render_activity(activity_steps, done=bool(partial_response))
                     if partial_response:
                         display = base_display + [{"role": "assistant", "content": _clean_message(partial_response)}]
                         yield (display, "", gr.update(), new_session_id,
-                               row_upd, *btn_upds, *text_upds, no_files, False,
+                               row_upd, *btn_upds, *text_upds, activity_upd, no_files, False,
+                               gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
+                    else:
+                        # Activity-only update (no text yet)
+                        yield (base_display + [{"role": "assistant", "content": _THINKING_HTML}],
+                               "", gr.update(), new_session_id,
+                               row_upd, *btn_upds, *text_upds, activity_upd, no_files, False,
                                gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
             except Exception as e:
                 partial_response = f"❌ Error: {str(e)}"
 
-            yield _final_yield(partial_response, new_session_id)
+            yield _final_yield(partial_response, new_session_id, activity_steps)
 
         send_btn.click(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat], chat_outputs)
         user_input.submit(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat], chat_outputs)
@@ -577,7 +667,7 @@ def create_gradio_ui():
         timer_outputs = (
             [chatbot, was_pending, session_list_html, active_session_id, sugg_row]
             + sugg_btns + sugg_texts
-            + [cited_files, timer, send_btn, stop_btn]
+            + [agent_activity, cited_files, timer, send_btn, stop_btn]
         )
 
         _send_show = gr.update(visible=True)
@@ -610,7 +700,7 @@ def create_gradio_ui():
             html = _render_sessions_html(sessions, active_id)
             return (gr.update(value=display), False,
                     gr.update(value=html), active_id,
-                    row_upd, *btn_upds, *text_upds, files_upd, gr.update(active=False),
+                    row_upd, *btn_upds, *text_upds, gr.update(), files_upd, gr.update(active=False),
                     _send_show, _stop_hide)
 
         timer.tick(poll_session, [active_session_id, was_pending], timer_outputs, show_progress=False)
@@ -669,7 +759,10 @@ def create_gradio_ui():
         stop_btn.click(stop_handler, [active_session_id], [chatbot, was_pending, timer, send_btn, stop_btn])
 
         # Nav
-        admin_btn.click(show_docs, None, views)
+        admin_btn.click(
+            show_docs, None,
+            views + [ai_temperature, ai_max_tools, ai_orchestrator_prompt, ai_aggregation_prompt, ai_fallback_prompt],
+        )
         history_nav_btn.click(show_history, None, views)
 
         # Documents
@@ -738,12 +831,65 @@ def create_gradio_ui():
             [file_table, state_dropdown, confirm_panel, confirm_input]
         )
 
+        # ── Re-index ──────────────────────────────────────────────────────────
+
+        def reindex_handler(progress=gr.Progress()):
+            total_md = len(list(doc_manager.markdown_dir.rglob("*.md")))
+            if total_md == 0:
+                return "⚠️ No documents found to re-index.", gr.update()
+            indexed = doc_manager.reindex_all(progress_callback=progress)
+            return f"✅ Re-indexed {indexed} of {total_md} documents successfully.", render_file_table()
+
+        reindex_btn.click(
+            reindex_handler,
+            None,
+            [reindex_status, file_table],
+        )
+
+        # ── AI Settings ───────────────────────────────────────────────────────
+
+        def save_ai_settings(temperature, max_tool_calls, orch_prompt, agg_prompt, fallback_prompt):
+            admin_config.save({
+                "temperature":              temperature,
+                "max_tool_calls":           int(max_tool_calls),
+                "orchestrator_prompt":      orch_prompt.strip(),
+                "aggregation_prompt":       agg_prompt.strip(),
+                "fallback_response_prompt": fallback_prompt.strip(),
+            })
+            rag_system.apply_settings()
+            ts = admin_config.get_all().get("last_updated", "")
+            return f"✅ Settings saved at {ts[:19].replace('T', ' ')} UTC"
+
+        def reset_ai_settings():
+            admin_config.reset()
+            rag_system.apply_settings()
+            return (
+                config.LLM_TEMPERATURE,
+                config.MAX_TOOL_CALLS,
+                get_orchestrator_prompt(),
+                get_aggregation_prompt(),
+                get_fallback_response_prompt(),
+                "↺ Reset to system defaults.",
+            )
+
+        ai_save_btn.click(
+            save_ai_settings,
+            [ai_temperature, ai_max_tools, ai_orchestrator_prompt, ai_aggregation_prompt, ai_fallback_prompt],
+            [ai_settings_status],
+        )
+        ai_reset_btn.click(
+            reset_ai_settings,
+            None,
+            [ai_temperature, ai_max_tools, ai_orchestrator_prompt, ai_aggregation_prompt, ai_fallback_prompt, ai_settings_status],
+        )
+
         # History
         refresh_history_btn.click(render_history, None, history_box)
         clear_history_btn.click(clear_history_handler, None, history_box)
 
         # On load — restore pending state if any session was mid-response
         demo.load(_refresh_sessions, None, [session_list_html, chatbot, active_session_id, was_pending])
+
 
     def _health_endpoint():
         return rag_system.get_health(refresh=True)

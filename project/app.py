@@ -11,6 +11,12 @@ warnings.filterwarnings(
     message=".*PydanticSerializationUnexpectedValue.*parsed.*",
     category=UserWarning,
 )
+warnings.filterwarnings(
+    "ignore",
+    message=".*Pydantic serializer warnings.*",
+    category=UserWarning,
+    module="pydantic.*",
+)
 
 sys.path.insert(0, os.path.dirname(__file__))
 

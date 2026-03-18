@@ -17,9 +17,11 @@ from rag_agent.graph import create_agent_graph
 from core.observability import Observability
 
 
-def _create_llm(provider: str | None = None, model: str | None = None):
+def _create_llm(provider: str | None = None, model: str | None = None, temperature: float | None = None):
     """Create an LLM instance for the given provider/model (or from config defaults)."""
+    from core.admin_config import get as _cfg_get
     provider = (provider or config.LLM_PROVIDER).lower()
+    temp = temperature if temperature is not None else _cfg_get("temperature", config.LLM_TEMPERATURE)
 
     if provider == "anthropic":
         api_key = config.ANTHROPIC_API_KEY
@@ -30,7 +32,7 @@ def _create_llm(provider: str | None = None, model: str | None = None):
             from langchain_anthropic import ChatAnthropic
         except ImportError as exc:
             raise ImportError("langchain-anthropic is required. Install it with `pip install langchain-anthropic`.") from exc
-        return ChatAnthropic(model=model, temperature=config.LLM_TEMPERATURE, api_key=api_key)
+        return ChatAnthropic(model=model, temperature=temp, api_key=api_key)
 
     if provider == "openai":
         model = model or config.OPENAI_MODEL
@@ -49,14 +51,14 @@ def _create_llm(provider: str | None = None, model: str | None = None):
             from langchain_openai import ChatOpenAI
         except ImportError as exc:
             raise ImportError("langchain-openai is required. Install it with `pip install langchain-openai`.") from exc
-        return ChatOpenAI(model=model, temperature=config.LLM_TEMPERATURE, api_key=config.OPENAI_API_KEY)
+        return ChatOpenAI(model=model, temperature=temp, api_key=config.OPENAI_API_KEY)
 
     # Ollama
     try:
         from langchain_ollama import ChatOllama
     except ImportError as exc:
         raise ImportError("langchain-ollama is required. Install it with `pip install langchain-ollama`.") from exc
-    return ChatOllama(model=model or config.LLM_MODEL, temperature=config.LLM_TEMPERATURE)
+    return ChatOllama(model=model or config.LLM_MODEL, temperature=temp)
 
 
 def _is_qdrant_running(url: str | None = None) -> bool:
@@ -152,6 +154,15 @@ class RAGSystem:
         self._active_model = model
         self._health_cache = None  # invalidate health cache
         
+    def apply_settings(self):
+        """Rebuild the LLM graph picking up new temperature from admin_config."""
+        print("⚙️  Applying admin settings — rebuilding LLM...")
+        llm = _create_llm(self._active_provider, self._active_model)
+        tools = self.tool_factory.create_tools()
+        self.agent_graph = create_agent_graph(llm, tools, self._checkpointer)
+        self._health_cache = None
+        print("✓ LLM rebuilt with updated settings.")
+
     def set_state_filter(self, state: str | None):
         """Set a namespace/state filter used during document retrieval."""
         self._state_filter = state

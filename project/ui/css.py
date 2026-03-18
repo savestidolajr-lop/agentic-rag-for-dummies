@@ -264,6 +264,57 @@ body { background: #212121 !important; }
 
 /* ── Input row ── */
 #input-row { align-items: flex-end !important; gap: 8px !important; margin-top: 4px !important; }
+
+/* ── Input meta row: model pill + disclaimer ── */
+#input-meta-row {
+    align-items: center !important;
+    gap: 10px !important;
+    padding: 4px 0 2px !important;
+    flex-wrap: nowrap !important;
+}
+#input-meta-row > *,
+#input-meta-row .block,
+#input-meta-row .form {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+#input-disclaimer {
+    text-align: center !important;
+    font-size: 11px !important;
+    color: #444 !important;
+    padding: 8px 0 4px !important;
+    width: 100% !important;
+}
+
+/* ── Inline model picker pill ── */
+#model-picker-inline .wrap-inner {
+    background: #1e1e1e !important;
+    border: 1px solid #333 !important;
+    border-radius: 20px !important;
+    height: 28px !important;
+    min-height: unset !important;
+    padding: 0 10px !important;
+    cursor: pointer !important;
+}
+#model-picker-inline input {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 12px !important;
+    color: #bbb !important;
+    height: 26px !important;
+    min-height: unset !important;
+    padding: 0 !important;
+    cursor: pointer !important;
+}
+#model-picker-inline .wrap-inner:hover {
+    border-color: #555 !important;
+    background: #252525 !important;
+}
+#model-picker-inline svg { color: #666 !important; width: 12px !important; }
 #user-input textarea {
     background: #2a2a2a !important;
     border: 1px solid #3a3a3a !important;
@@ -362,6 +413,38 @@ h1, h2, h3, h4, h5, h6, p, span, div { color: inherit; }
 }
 .sugg-btn:hover { background: #333 !important; border-color: #555 !important; color: #fff !important; }
 
+/* ── Agent activity panel ── */
+#agent-activity { margin-bottom: 6px !important; }
+.activity-panel {
+    background: #161616;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 12px;
+}
+.activity-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    color: #666;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+}
+.activity-summary::-webkit-details-marker { display: none; }
+.activity-panel[open] .activity-summary { color: #888; border-bottom: 1px solid #222; }
+.activity-count {
+    background: #2a2a2a;
+    color: #555;
+    border-radius: 10px;
+    padding: 1px 6px;
+    font-size: 11px;
+}
+.activity-steps { padding: 8px 12px; display: flex; flex-direction: column; gap: 5px; }
+.activity-step { color: #777; font-size: 12px; line-height: 1.4; }
+.activity-step em { color: #10a37f; font-style: normal; }
+
 /* ── Cited source files ── */
 #cited-files { margin-top: 6px !important; }
 .cited-sources {
@@ -378,6 +461,12 @@ h1, h2, h3, h4, h5, h6, p, span, div { color: inherit; }
     border-radius: 6px; font-size: 12px; margin: 2px 4px 2px 0; border: 1px solid #333;
 }
 .cited-link:hover { background: #2f2f2f !important; color: #fff !important; border-color: #555; }
+
+/* ── Admin tabs ── */
+#admin-tabs > .tab-nav { border-bottom: 1px solid #2a2a2a !important; }
+#admin-tabs .tab-nav button { color: #888 !important; font-size: 13px !important; }
+#admin-tabs .tab-nav button.selected { color: #ececec !important; border-bottom-color: #10a37f !important; }
+#ai-settings-status p { font-size: 12px !important; color: #10a37f !important; margin: 4px 0 !important; }
 
 /* ── Danger zone accordion ── */
 #danger-zone-accordion {

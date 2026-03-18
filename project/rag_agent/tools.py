@@ -99,5 +99,6 @@ class ToolFactory:
         """Create and return the list of tools."""
         search_tool = tool("search_child_chunks")(self._search_child_chunks)
         retrieve_tool = tool("retrieve_parent_chunks")(self._retrieve_parent_chunks)
-        
-        return [search_tool, retrieve_tool]
+        retrieve_many_tool = tool("retrieve_parent_chunks_batch")(self._retrieve_many_parent_chunks)
+
+        return [search_tool, retrieve_tool, retrieve_many_tool]

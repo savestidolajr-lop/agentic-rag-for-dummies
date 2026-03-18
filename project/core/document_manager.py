@@ -1,4 +1,7 @@
 from pathlib import Path
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 import shutil
 import config
 from utils import pdfs_to_markdowns
@@ -105,6 +108,69 @@ class DocumentManager:
                 continue
 
         return sorted(states)
+
+    def reindex_all(self, progress_callback=None):
+        """Clear vectors + parent store, then re-chunk and re-index all existing markdown files
+        in parallel — one worker thread per namespace. Original PDFs and markdowns are preserved."""
+        self.rag_system.parent_store.clear_store()
+        self.rag_system.vector_db.delete_collection(self.rag_system.collection_name)
+        self.rag_system.vector_db.create_collection(self.rag_system.collection_name)
+
+        # Group markdown files by namespace so each worker owns exactly one state.
+        md_files = sorted(self.markdown_dir.rglob("*.md"))
+        total = len(md_files)
+        if total == 0:
+            return 0
+
+        by_namespace: dict[str | None, list[Path]] = defaultdict(list)
+        for md_path in md_files:
+            rel = md_path.relative_to(self.markdown_dir)
+            state = "/".join(rel.parts[:-1]) if len(rel.parts) > 1 else None
+            by_namespace[state].append(md_path)
+
+        collection = self.rag_system.vector_db.get_collection(self.rag_system.collection_name)
+        counter_lock = threading.Lock()
+        done = 0
+        indexed = 0
+
+        def _process_namespace(state: str | None, paths: list[Path]) -> int:
+            nonlocal done, indexed
+            count = 0
+            for md_path in paths:
+                try:
+                    orig_dir = self.documents_dir / state if state else self.documents_dir
+                    pdf_name = md_path.stem + ".pdf"
+                    original_filename = pdf_name if (orig_dir / pdf_name).exists() else None
+                    parent_chunks, child_chunks = self.rag_system.chunker.create_chunks_single(
+                        md_path, state=state, original_filename=original_filename
+                    )
+                    if child_chunks:
+                        collection.add_documents(child_chunks)
+                        self.rag_system.parent_store.save_many(parent_chunks)
+                        count += 1
+                except Exception as e:
+                    print(f"Error re-indexing {md_path.name} [{state}]: {e}")
+                finally:
+                    with counter_lock:
+                        done += 1
+                        if progress_callback:
+                            ns_label = state or "root"
+                            progress_callback(done / total, f"[{ns_label}] {md_path.name} ({done}/{total})")
+            return count
+
+        n_workers = min(len(by_namespace), 8)
+        with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="reindex") as executor:
+            futures = {
+                executor.submit(_process_namespace, state, paths): state
+                for state, paths in by_namespace.items()
+            }
+            for future in as_completed(futures):
+                try:
+                    indexed += future.result()
+                except Exception as e:
+                    print(f"Namespace worker failed: {e}")
+
+        return indexed
 
     def clear_all(self):
         if self.markdown_dir.exists():
