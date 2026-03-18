@@ -52,7 +52,18 @@ body { background: #212121 !important; }
 #new-chat-btn:hover { background: #2a2a2a !important; color: #fff !important; }
 
 /* Session HTML list */
-#session-list { background: transparent !important; border: none !important; padding: 0 !important; }
+#session-list {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    max-height: calc(100vh - 280px) !important;
+    overflow-y: auto !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: #333 transparent !important;
+}
+#session-list::-webkit-scrollbar { width: 4px; }
+#session-list::-webkit-scrollbar-track { background: transparent; }
+#session-list::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
 .session-empty { font-size: 12px; color: #444; padding: 8px 10px; }
 .session-item {
     display: flex;
@@ -201,6 +212,16 @@ body { background: #212121 !important; }
 
 /* ── Chatbot ── */
 #chatbot { border: none !important; }
+
+/* Hide top-right toolbar buttons (share / copy-all / delete) */
+#chatbot .top-panel { display: none !important; }
+#chatbot .share-button { display: none !important; }
+#chatbot button[title="Share"],
+#chatbot button[title="Delete"],
+#chatbot button[title="Copy"],
+#chatbot button[aria-label="Share"],
+#chatbot button[aria-label="Delete"],
+#chatbot button[aria-label="Clear"] { display: none !important; }
 
 /* Message bubbles */
 #chatbot .message { color: #ececec !important; font-size: 14px !important; line-height: 1.65 !important; }
@@ -357,4 +378,45 @@ h1, h2, h3, h4, h5, h6, p, span, div { color: inherit; }
     border-radius: 6px; font-size: 12px; margin: 2px 4px 2px 0; border: 1px solid #333;
 }
 .cited-link:hover { background: #2f2f2f !important; color: #fff !important; border-color: #555; }
+
+/* ── Danger zone accordion ── */
+#danger-zone-accordion {
+    margin-top: 16px !important;
+    border: 1px solid #3a1a1a !important;
+    border-radius: 8px !important;
+    background: #1a1010 !important;
+}
+#danger-zone-accordion > .label-wrap span {
+    color: #a04040 !important;
+    font-size: 12px !important;
+}
+
+/* ── Clear All (danger) button ── */
+#clear-all-btn button {
+    background-color: #8b2020 !important;
+    border-color: #a32828 !important;
+    color: #fff !important;
+}
+#clear-all-btn button:hover {
+    background-color: #a32828 !important;
+    border-color: #c03030 !important;
+}
+
+/* ── Confirm delete panel ── */
+#confirm-delete-input textarea {
+    background: #1a0808 !important;
+    border-color: #8b2020 !important;
+    color: #ffcccc !important;
+    font-size: 15px !important;
+    text-align: center !important;
+    letter-spacing: 2px !important;
+}
+#confirm-delete-confirm-btn button {
+    background-color: #8b2020 !important;
+    border-color: #a32828 !important;
+    color: #fff !important;
+}
+#confirm-delete-confirm-btn button:hover {
+    background-color: #c0392b !important;
+}
 """

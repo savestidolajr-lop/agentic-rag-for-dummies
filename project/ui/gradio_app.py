@@ -56,9 +56,21 @@ def _parse_options(text: str):
     return _OPTIONS_RE.sub("", text).strip(), opts
 
 
+def _fix_list_newlines(text: str) -> str:
+    """Ensure numbered/lettered/dash list items each start on their own line."""
+    # Numbered lists: "1. " "2. " etc.
+    text = re.sub(r'(?<!\n)[ \t]+(\d+[.)]\s)', r'\n\1', text)
+    # Lettered lists: "a. " "b) " etc.
+    text = re.sub(r'(?<!\n)[ \t]+([a-zA-Z][.)]\s)', r'\n\1', text)
+    # Dash / bullet items
+    text = re.sub(r'(?<!\n)[ \t]+([-•]\s)', r'\n\1', text)
+    return text
+
+
 def _clean_message(text: str) -> str:
     text = _OPTIONS_RE.sub("", text)
     text = _CITED_RE.sub("", text)
+    text = _fix_list_newlines(text)
     text = _auto_highlight(text)
     return text.strip()
 
@@ -135,11 +147,66 @@ def create_gradio_ui():
 
     DEFAULT_STATE_CHOICES = ["NSW", "VIC", "QLD", "SA", "NT", "WA", "TAS", "ACT"]
 
-    def format_file_list():
-        files = doc_manager.get_markdown_files()
+    PAGE_SIZE = 15
+
+    def render_file_table(state_filter="All States", search_query="", page=0):
+        files = doc_manager.get_files_structured()
+        if state_filter and state_filter.lower() not in ("all states", "all"):
+            files = [f for f in files if f["state"] == state_filter]
+        if search_query and search_query.strip():
+            q = search_query.strip().lower()
+            files = [f for f in files if q in f["filename"].lower() or q in f["state"].lower()]
+
         if not files:
-            return "No documents in the knowledge base."
-        return "\n".join(files)
+            return '<div style="padding:16px;color:#888;text-align:center;">No documents found.</div>'
+
+        total = len(files)
+        total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = max(0, min(page, total_pages - 1))
+        page_files = files[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+        state_counts = {}
+        for f in files:
+            state_counts[f["state"]] = state_counts.get(f["state"], 0) + 1
+
+        rows = ""
+        for f in page_files:
+            safe = f["filename"].replace('"', "")
+            rows += f"""
+            <tr>
+                <td><span class="state-badge">{f["state"]}</span></td>
+                <td class="filename-cell">📄 {f["filename"]}</td>
+                <td><a href="/files/{safe}" download="{safe}" class="dl-btn">↓ Download</a></td>
+            </tr>"""
+
+        stats = " · ".join(f'<b>{s}</b>: {c}' for s, c in sorted(state_counts.items()))
+
+        return f"""
+        <div class="file-table-wrap">
+            <div class="file-stats">{stats}</div>
+            <table class="file-table">
+                <thead><tr><th>State</th><th>File</th><th></th></tr></thead>
+                <tbody>{rows}</tbody>
+            </table>
+        </div>
+        <style>
+            .file-table-wrap {{ border:1px solid #2d2d2d; border-radius:8px; overflow:hidden; }}
+            .file-stats {{ padding:8px 14px; font-size:12px; color:#888; background:#161616; border-bottom:1px solid #2d2d2d; }}
+            .file-table {{ width:100%; border-collapse:collapse; font-size:13px; }}
+            .file-table thead tr {{ background:#1a1a1a; }}
+            .file-table th {{ padding:8px 12px; text-align:left; color:#aaa; font-weight:500; border-bottom:1px solid #2d2d2d; }}
+            .file-table tbody tr {{ border-bottom:1px solid #1e1e1e; transition:background .15s; }}
+            .file-table tbody tr:hover {{ background:#1c1c1c; }}
+            .file-table td {{ padding:7px 12px; color:#ddd; vertical-align:middle; }}
+            .filename-cell {{ font-family:monospace; font-size:12px; }}
+            .state-badge {{ background:#232323; border:1px solid #333; border-radius:4px; padding:2px 7px; font-size:11px; color:#10a37f; white-space:nowrap; }}
+            .dl-btn {{ color:#10a37f; text-decoration:none; font-size:12px; padding:3px 8px; border:1px solid #10a37f33; border-radius:4px; white-space:nowrap; }}
+            .dl-btn:hover {{ background:#10a37f22; }}
+            .pagination {{ display:flex; align-items:center; justify-content:center; gap:12px; padding:10px; background:#161616; border-top:1px solid #2d2d2d; }}
+            .pg-btn {{ background:#232323; border:1px solid #333; color:#ccc; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:12px; }}
+            .pg-btn:hover:not([disabled]) {{ background:#2d2d2d; }}
+            .pg-info {{ font-size:12px; color:#888; }}
+        </style>"""
 
     def get_state_choices():
         all_states = ["All States"] + DEFAULT_STATE_CHOICES
@@ -164,19 +231,14 @@ def create_gradio_ui():
 
     def upload_handler(files, state, progress=gr.Progress()):
         if not files:
-            return None, format_file_list(), gr.update(choices=get_state_choices())
+            return None, render_file_table(), gr.update(choices=get_state_choices())
         added, skipped = doc_manager.add_documents(
             files,
             state=state if state and state.lower() not in ["all", "all states"] else None,
             progress_callback=lambda p, desc: progress(p, desc=desc),
         )
         gr.Info(f"Added: {added} | Skipped: {skipped}")
-        return None, format_file_list(), gr.update(choices=get_state_choices())
-
-    def clear_handler():
-        doc_manager.clear_all()
-        gr.Info("Removed all documents")
-        return format_file_list()
+        return None, render_file_table(), gr.update(choices=get_state_choices())
 
     def render_history():
         history = chat_interface.get_history()
@@ -311,30 +373,67 @@ def create_gradio_ui():
                         send_btn = gr.Button("⬆", variant="primary", scale=0, elem_id="send-btn")
                         stop_btn = gr.Button("⏹", variant="stop",    scale=0, elem_id="stop-btn", visible=False)
 
-                    with gr.Row():
-                        clear_chat_btn = gr.Button("Clear chat", size="sm")
+                    gr.HTML('<div style="text-align:center;font-size:12px;color:#555;padding:6px 0;">AI can make mistakes. Please double-check responses.</div>')
 
                 # ── Admin Panel ────────────────────────────────────────
                 with gr.Column(visible=False) as docs_view:
 
                     gr.HTML('<div class="view-title">Admin Panel — Documents</div>')
-                    gr.Markdown("Upload PDF or Markdown files. Duplicates are skipped automatically.")
 
-                    state_dropdown = gr.Dropdown(
-                        label="Namespace / State (optional)", choices=get_state_choices(),
-                        value="All States", allow_custom_value=True, interactive=True,
-                    )
-                    files_input = gr.File(file_count="multiple", type="filepath", height=160, show_label=False)
+                    with gr.Row():
+                        state_dropdown = gr.Dropdown(
+                            label="Upload to State", choices=get_state_choices(),
+                            value="All States", allow_custom_value=True, interactive=True,
+                        )
+                    files_input = gr.File(file_count="multiple", type="filepath", height=140, show_label=False)
                     add_btn = gr.Button("Add Documents", variant="primary")
 
-                    gr.Markdown("#### Indexed Documents")
-                    file_list = gr.Textbox(
-                        value=format_file_list(), interactive=False,
-                        lines=7, max_lines=12, show_label=False,
-                    )
+                    gr.HTML('<div style="margin-top:20px;margin-bottom:8px;font-weight:600;color:#ccc;">Indexed Documents</div>')
+
                     with gr.Row():
-                        refresh_docs_btn = gr.Button("Refresh")
-                        clear_docs_btn   = gr.Button("Clear All", variant="stop")
+                        file_search = gr.Textbox(
+                            placeholder="Search by filename...",
+                            show_label=False, scale=3, elem_id="file-search"
+                        )
+                        file_state_filter = gr.Dropdown(
+                            choices=["All States"] + DEFAULT_STATE_CHOICES,
+                            value="All States", show_label=False, scale=1,
+                            elem_id="file-state-filter"
+                        )
+                        refresh_docs_btn = gr.Button("↻ Refresh", scale=0, min_width=90)
+
+                    file_table = gr.HTML(value=render_file_table())
+                    file_page = gr.State(0)
+                    with gr.Row(elem_id="pagination-row"):
+                        prev_btn = gr.Button("← Prev", size="sm", scale=0, min_width=80)
+                        page_info = gr.Markdown("Page 1", elem_id="page-info")
+                        next_btn = gr.Button("Next →", size="sm", scale=0, min_width=80)
+
+                    # ── Danger zone accordion (collapsed by default) ───────────
+                    with gr.Accordion("Danger Zone", open=False, elem_id="danger-zone-accordion"):
+                        clear_docs_btn = gr.Button("🗑 Clear All Documents", elem_id="clear-all-btn")
+
+                    # ── Confirmation panel (hidden until Clear All is clicked) ──
+                    with gr.Column(visible=False, elem_id="confirm-delete-panel") as confirm_panel:
+                        gr.HTML("""
+                        <div style="background:#2a0a0a;border:1px solid #8b2020;border-radius:10px;padding:16px 18px;margin-top:12px;">
+                            <div style="color:#ff6b6b;font-size:15px;font-weight:700;margin-bottom:6px;">⚠️ Danger Zone</div>
+                            <div style="color:#ccc;font-size:13px;line-height:1.5;">
+                                This will permanently delete <strong style="color:#fff;">all uploaded documents</strong>,
+                                all indexed vectors in the database, and all stored chunks.<br>
+                                <span style="color:#ff9999;">This action cannot be undone.</span>
+                            </div>
+                        </div>
+                        """)
+                        confirm_input = gr.Textbox(
+                            placeholder='Type  DELETE  to confirm',
+                            show_label=False,
+                            elem_id="confirm-delete-input",
+                            max_lines=1,
+                        )
+                        with gr.Row():
+                            confirm_delete_btn = gr.Button("Confirm Delete", variant="stop", scale=1, elem_id="confirm-delete-confirm-btn")
+                            cancel_delete_btn  = gr.Button("Cancel", scale=1, elem_id="confirm-delete-cancel-btn")
 
                 # ── History view ───────────────────────────────────────
                 with gr.Column(visible=False) as history_view:
@@ -429,6 +528,18 @@ def create_gradio_ui():
             html = _render_sessions_html(sessions, active_id=new_session_id)
             base_display = list(chat_history or []) + [{"role": "user", "content": message.strip()}]
 
+            def _final_yield(partial_response, new_session_id):
+                _, options = _parse_options(partial_response)
+                row_upd2, btn_upds2, text_upds2 = _sugg_updates(options)
+                cited_html = _get_cited_html(partial_response)
+                files_upd = gr.update(visible=bool(cited_html), value=cited_html)
+                sessions = chat_interface.get_sessions()
+                html = _render_sessions_html(sessions, active_id=new_session_id)
+                final_display = base_display + [{"role": "assistant", "content": _clean_message(partial_response or "No response generated.")}]
+                return (final_display, "", gr.update(value=html), new_session_id,
+                        row_upd2, *btn_upds2, *text_upds2, files_upd, False,
+                        gr.update(active=False), _send_show, _stop_hide)
+
             # Show thinking indicator while agent is working
             yield (base_display + [{"role": "assistant", "content": _THINKING_HTML}],
                    "", gr.update(value=html), new_session_id,
@@ -437,25 +548,17 @@ def create_gradio_ui():
 
             # Stream tokens as they arrive from aggregate_answers
             partial_response = ""
-            for partial_response, _ in streamer:
-                if partial_response:
-                    display = base_display + [{"role": "assistant", "content": _clean_message(partial_response)}]
-                    yield (display, "", gr.update(), new_session_id,
-                           row_upd, *btn_upds, *text_upds, no_files, False,
-                           gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
+            try:
+                for partial_response, _ in streamer:
+                    if partial_response:
+                        display = base_display + [{"role": "assistant", "content": _clean_message(partial_response)}]
+                        yield (display, "", gr.update(), new_session_id,
+                               row_upd, *btn_upds, *text_upds, no_files, False,
+                               gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
+            except Exception as e:
+                partial_response = f"❌ Error: {str(e)}"
 
-            # Final yield — restore send button, show suggestions and citations
-            _, options = _parse_options(partial_response)
-            row_upd2, btn_upds2, text_upds2 = _sugg_updates(options)
-            cited_html = _get_cited_html(partial_response)
-            files_upd = gr.update(visible=bool(cited_html), value=cited_html)
-            sessions = chat_interface.get_sessions()
-            html = _render_sessions_html(sessions, active_id=new_session_id)
-            final_display = base_display + [{"role": "assistant", "content": _clean_message(partial_response or "No response generated.")}]
-
-            yield (final_display, "", gr.update(value=html), new_session_id,
-                   row_upd2, *btn_upds2, *text_upds2, files_upd, False,
-                   gr.update(active=False), _send_show, _stop_hide)
+            yield _final_yield(partial_response, new_session_id)
 
         send_btn.click(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat], chat_outputs)
         user_input.submit(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat], chat_outputs)
@@ -565,29 +668,75 @@ def create_gradio_ui():
 
         stop_btn.click(stop_handler, [active_session_id], [chatbot, was_pending, timer, send_btn, stop_btn])
 
-        def clear_chat_handler(active_id):
-            chat_interface.clear_session(session_id=active_id)
-            row_upd, btn_upds, _ = _hidden_sugg
-            return [], row_upd, *btn_upds, gr.update(visible=False, value=""), False, _send_show, _stop_hide
-
-        clear_chat_btn.click(
-            clear_chat_handler, [active_session_id],
-            [chatbot, sugg_row] + sugg_btns + [cited_files, was_pending, send_btn, stop_btn],
-        )
-
         # Nav
         admin_btn.click(show_docs, None, views)
         history_nav_btn.click(show_history, None, views)
 
         # Documents
         add_btn.click(upload_handler, [files_input, state_dropdown],
-                      [files_input, file_list, state_dropdown], show_progress="corner")
-        refresh_docs_btn.click(
-            lambda: (format_file_list(), gr.update(choices=get_state_choices())),
-            None, [file_list, state_dropdown])
+                      [files_input, file_table, state_dropdown], show_progress="corner")
+
+        def refresh_docs(state_filter, search_query):
+            return render_file_table(state_filter, search_query, 0), gr.update(choices=["All States"] + doc_manager.get_states()), 0, _page_info(0, state_filter, search_query)
+
+        refresh_docs_btn.click(refresh_docs, [file_state_filter, file_search], [file_table, file_state_filter, file_page, page_info])
+
+        def _page_info(page, state_filter, search_query):
+            files = doc_manager.get_files_structured()
+            if state_filter and state_filter.lower() not in ("all states", "all"):
+                files = [f for f in files if f["state"] == state_filter]
+            if search_query and search_query.strip():
+                q = search_query.strip().lower()
+                files = [f for f in files if q in f["filename"].lower() or q in f["state"].lower()]
+            total_pages = max(1, (len(files) + PAGE_SIZE - 1) // PAGE_SIZE)
+            return f"Page {page + 1} of {total_pages}"
+
+        def go_prev(page, state_filter, search_query):
+            new_page = max(0, page - 1)
+            return render_file_table(state_filter, search_query, new_page), new_page, _page_info(new_page, state_filter, search_query)
+
+        def go_next(page, state_filter, search_query):
+            files = doc_manager.get_files_structured()
+            if state_filter and state_filter.lower() not in ("all states", "all"):
+                files = [f for f in files if f["state"] == state_filter]
+            total_pages = max(1, (len(files) + PAGE_SIZE - 1) // PAGE_SIZE)
+            new_page = min(total_pages - 1, page + 1)
+            return render_file_table(state_filter, search_query, new_page), new_page, _page_info(new_page, state_filter, search_query)
+
+        def reset_page(state_filter, search_query):
+            return render_file_table(state_filter, search_query, 0), 0, _page_info(0, state_filter, search_query)
+
+        prev_btn.click(go_prev, [file_page, file_state_filter, file_search], [file_table, file_page, page_info])
+        next_btn.click(go_next, [file_page, file_state_filter, file_search], [file_table, file_page, page_info])
+        file_search.change(reset_page, [file_state_filter, file_search], [file_table, file_page, page_info])
+        file_state_filter.change(reset_page, [file_state_filter, file_search], [file_table, file_page, page_info])
+
+        # Show confirmation panel when Clear All is clicked
         clear_docs_btn.click(
-            lambda: (clear_handler(), gr.update(choices=get_state_choices())),
-            None, [file_list, state_dropdown])
+            lambda: gr.update(visible=True),
+            None, confirm_panel
+        )
+
+        # Cancel — hide panel and clear input
+        cancel_delete_btn.click(
+            lambda: (gr.update(visible=False), ""),
+            None, [confirm_panel, confirm_input]
+        )
+
+        # Confirm — only execute if input is exactly "DELETE"
+        def clear_handler_full(confirm_text):
+            if confirm_text.strip() != "DELETE":
+                gr.Warning('Type  DELETE  (all caps) to confirm.')
+                return gr.update(), gr.update(choices=get_state_choices()), gr.update(visible=True), ""
+            doc_manager.clear_all()
+            gr.Info("All documents and vectors have been removed.")
+            return render_file_table(), gr.update(choices=get_state_choices()), gr.update(visible=False), ""
+
+        confirm_delete_btn.click(
+            clear_handler_full,
+            [confirm_input],
+            [file_table, state_dropdown, confirm_panel, confirm_input]
+        )
 
         # History
         refresh_history_btn.click(render_history, None, history_box)

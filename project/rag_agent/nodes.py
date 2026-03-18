@@ -8,7 +8,7 @@ from utils import estimate_context_tokens
 from config import BASE_TOKEN_THRESHOLD, TOKEN_GROWTH_FACTOR
 
 def summarize_history(state: State, llm):
-    if len(state["messages"]) < 4:
+    if len(state["messages"]) < 10:
         return {"conversation_summary": ""}
     
     relevant_msgs = [
@@ -20,7 +20,7 @@ def summarize_history(state: State, llm):
         return {"conversation_summary": ""}
     
     conversation = "Conversation history:\n"
-    for msg in relevant_msgs[-6:]:
+    for msg in relevant_msgs[-10:]:
         role = "User" if isinstance(msg, HumanMessage) else "Assistant"
         conversation += f"{role}: {msg.content}\n"
 

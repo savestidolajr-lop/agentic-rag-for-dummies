@@ -222,16 +222,33 @@ class ChatInterface:
         yield "", session_id  # Signal session_id to caller before blocking on agent
 
         full_response = ""
+        last_state = None
         try:
-            for chunk, metadata in self.rag_system.agent_graph.stream(
+            for mode, data in self.rag_system.agent_graph.stream(
                 {"messages": [HumanMessage(content=message.strip())]},
                 self.rag_system.get_config(thread_id=session_id),
-                stream_mode="messages",
+                stream_mode=["messages", "values"],
             ):
-                if isinstance(chunk, AIMessageChunk) and chunk.content:
-                    if metadata.get("langgraph_node") == "aggregate_answers":
-                        full_response += chunk.content
+                if mode == "messages":
+                    chunk, metadata = data
+                    if isinstance(chunk, AIMessageChunk) and chunk.content:
+                        if metadata.get("langgraph_node") == "aggregate_answers":
+                            full_response += chunk.content
+                            yield full_response, session_id
+                elif mode == "values":
+                    last_state = data
+
+            # Fallback: if token streaming produced nothing, extract from final state
+            if not full_response and last_state:
+                msgs = last_state.get("messages", [])
+                for msg in reversed(msgs):
+                    if (hasattr(msg, "content") and msg.content
+                            and not getattr(msg, "tool_calls", None)
+                            and not isinstance(msg, HumanMessage)):
+                        full_response = msg.content
                         yield full_response, session_id
+                        break
+
         except Exception as e:
             full_response = f"❌ Error: {str(e)}"
             yield full_response, session_id

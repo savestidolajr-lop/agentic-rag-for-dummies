@@ -46,7 +46,7 @@ if __name__ == "__main__":
         button_secondary_border_color="#333",
     )
 
-    share = os.getenv("GRADIO_SHARE", "true").lower() in ("1", "true", "yes")
+    share = os.getenv("GRADIO_SHARE", "false").lower() in ("1", "true", "yes")
 
     # Render (and other platforms) provide the HTTP port via the PORT env var.
     port = int(os.getenv("PORT", "7860"))

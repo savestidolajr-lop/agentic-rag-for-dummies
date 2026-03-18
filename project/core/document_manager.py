@@ -73,20 +73,21 @@ class DocumentManager:
         return added, skipped
     
     def get_markdown_files(self):
+        return [f["filename"] for f in self.get_files_structured()]
+
+    def get_files_structured(self):
+        """Return list of {state, filename} dicts for all indexed documents."""
         if not self.markdown_dir.exists():
             return []
-
         results = []
         for p in sorted(self.markdown_dir.rglob("*.md")):
-            # Show the state namespace in the display name when present
             try:
                 rel = p.relative_to(self.markdown_dir)
-                if len(rel.parts) > 1:
-                    results.append(str(rel.with_suffix(".pdf")))
-                else:
-                    results.append(str(rel.with_suffix(".pdf")))
+                state = "/".join(rel.parts[:-1]) if len(rel.parts) > 1 else "No State"
+                filename = rel.parts[-1].replace(".md", ".pdf")
+                results.append({"state": state, "filename": filename})
             except Exception:
-                results.append(p.name.replace(".md", ".pdf"))
+                continue
         return results
 
     def get_states(self):
