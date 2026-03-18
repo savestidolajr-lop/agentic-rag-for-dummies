@@ -156,7 +156,7 @@ _enter_js = """
         });
     }
 
-    /* ── Random thinking word cycler (single global interval) ── */
+    /* ── Random thinking word cycler ── */
     const _words = [
         'Thinking','Searching','Analysing','Reading','Processing',
         'Reasoning','Reviewing','Stewing','Herding','Deciphering',
@@ -168,26 +168,27 @@ _enter_js = """
         return _lastWord = w;
     }
 
-    setInterval(() => {
+    let _thinkTimer = null;
+    function _cycleWord() {
         const el = document.querySelector('.thinking-word-display');
-        if (!el) return;
-        el.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+        if (!el) { clearInterval(_thinkTimer); _thinkTimer = null; return; }
+        el.style.transition = 'opacity 0.25s ease';
         el.style.opacity = '0';
-        el.style.transform = 'translateY(-5px)';
         setTimeout(() => {
             const el2 = document.querySelector('.thinking-word-display');
             if (!el2) return;
             el2.textContent = _rand();
-            el2.style.transition = 'none';
-            el2.style.transform = 'translateY(5px)';
-            el2.style.opacity = '0';
-            requestAnimationFrame(() => requestAnimationFrame(() => {
-                el2.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
-                el2.style.opacity = '1';
-                el2.style.transform = 'translateY(0)';
-            }));
-        }, 320);
-    }, 4000);
+            el2.style.opacity = '1';
+        }, 260);
+    }
+    function _startThinkCycle() {
+        if (_thinkTimer) return;
+        setTimeout(_cycleWord, 2500);   // first change after 2.5 s
+        _thinkTimer = setInterval(_cycleWord, 3000);
+    }
+    function _stopThinkCycle() {
+        if (_thinkTimer) { clearInterval(_thinkTimer); _thinkTimer = null; }
+    }
 
     /* ── Auto-scroll activity steps to bottom on each update ── */
     function scrollActivityToBottom() {
@@ -203,6 +204,11 @@ _enter_js = """
     const _obs = new MutationObserver(() => {
         attachEnterHandler();
         scrollActivityToBottom();
+        if (document.querySelector('.thinking-word-display')) {
+            _startThinkCycle();
+        } else {
+            _stopThinkCycle();
+        }
     });
     _obs.observe(document.body, { childList: true, subtree: true });
 }
@@ -429,6 +435,9 @@ def create_gradio_ui():
                     agent_activity = gr.HTML("", visible=False, elem_id="agent-activity")
                     cited_files = gr.HTML("", visible=False, elem_id="cited-files")
 
+                    eval_btn   = gr.Button("🔍 Check Answer Quality", visible=False, size="sm", elem_id="eval-btn")
+                    eval_panel = gr.Markdown("", visible=False, elem_id="eval-panel")
+
                     with gr.Row(visible=False, elem_id="sugg-row") as sugg_row:
                         sugg_btns = [
                             gr.Button("", visible=False, size="sm", elem_classes=["sugg-btn"])
@@ -607,18 +616,17 @@ def create_gradio_ui():
             <details open class="activity-panel">
                 <summary class="activity-summary">
                     ⟳ Agent working…
-                    <span class="activity-count">{len(steps)}</span>
                 </summary>
                 <div class="activity-steps">{"".join(items)}</div>
             </details>"""
             return gr.update(visible=True, value=html)
 
         # chat_outputs: chatbot, input, session_list_html, active_session_id, sugg_row,
-        #               btns×4, texts×4, agent_activity, files, was_pending, timer, send_btn, stop_btn
+        #               btns×4, texts×4, agent_activity, files, was_pending, timer, send_btn, stop_btn, eval_btn
         chat_outputs = (
             [chatbot, user_input, session_list_html, active_session_id, sugg_row]
             + sugg_btns + sugg_texts
-            + [agent_activity, cited_files, was_pending, timer, send_btn, stop_btn]
+            + [agent_activity, cited_files, was_pending, timer, send_btn, stop_btn, eval_btn]
         )
 
         def _sugg_updates(options):
@@ -678,7 +686,7 @@ def create_gradio_ui():
             no_activity = gr.update(visible=False, value="")
 
             if not message or not message.strip():
-                yield chat_history, "", gr.update(), session_id, row_upd, *btn_upds, *text_upds, no_activity, no_files, False, gr.update(), gr.update(), gr.update()
+                yield chat_history, "", gr.update(), session_id, row_upd, *btn_upds, *text_upds, no_activity, no_files, False, gr.update(), gr.update(), gr.update(), gr.update(visible=False)
                 return
 
             # Apply state filter
@@ -703,15 +711,16 @@ def create_gradio_ui():
                 sessions = chat_interface.get_sessions()
                 html = _render_sessions_html(sessions, active_id=new_session_id)
                 final_display = base_display + [{"role": "assistant", "content": _clean_message(partial_response or "No response generated.")}]
+                # has_response = bool(partial_response and partial_response.strip())
                 return (final_display, "", gr.update(value=html), new_session_id,
                         row_upd2, *btn_upds2, *text_upds2, activity_upd, files_upd, False,
-                        gr.update(active=False), _send_show, _stop_hide)
+                        gr.update(active=False), _send_show, _stop_hide, gr.update(visible=False))
 
             # Show thinking indicator while agent is working
             yield (base_display + [{"role": "assistant", "content": _THINKING_HTML}],
                    "", gr.update(value=html), new_session_id,
                    row_upd, *btn_upds, *text_upds, no_activity, no_files, False,
-                   gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
+                   gr.update(active=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=False))
 
             # Stream tokens and activity steps as they arrive
             partial_response = ""
@@ -723,13 +732,13 @@ def create_gradio_ui():
                         display = base_display + [{"role": "assistant", "content": _clean_message(partial_response)}]
                         yield (display, "", gr.update(), new_session_id,
                                row_upd, *btn_upds, *text_upds, gr.update(), no_files, False,
-                               gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
+                               gr.update(active=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=False))
                     else:
                         # Leave chatbot untouched (gr.update()) so the thinking word
                         # element stays in the DOM and the JS cycler can update it
                         yield (gr.update(), "", gr.update(), new_session_id,
                                row_upd, *btn_upds, *text_upds, activity_upd, no_files, False,
-                               gr.update(active=False), gr.update(visible=False), gr.update(visible=True))
+                               gr.update(active=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=False))
             except Exception as e:
                 partial_response = f"❌ Error: {str(e)}"
 
@@ -746,12 +755,12 @@ def create_gradio_ui():
 
         # ── Timer polling — updates chatbot when background response arrives ──
         # timer_outputs: chatbot, was_pending, session_list_html, active_session_id,
-        #                sugg_row, btns×4, texts×4, files, timer, send_btn, stop_btn
-        # Total: 1+1+1+1+1+4+4+1+1+1+1 = 17
+        #                sugg_row, btns×4, texts×4, agent_activity, files, timer, send_btn, stop_btn, eval_btn
+        # Total: 1+1+1+1+1+4+4+1+1+1+1+1+1 = 19
         timer_outputs = (
             [chatbot, was_pending, session_list_html, active_session_id, sugg_row]
             + sugg_btns + sugg_texts
-            + [agent_activity, cited_files, timer, send_btn, stop_btn]
+            + [agent_activity, cited_files, timer, send_btn, stop_btn, eval_btn]
         )
 
         _send_show = gr.update(visible=True)
@@ -764,14 +773,14 @@ def create_gradio_ui():
             no_change = [_noop] * (len(timer_outputs) - 2)
 
             if not active_id or not is_pending:
-                return _noop, False, *no_change[:-3], gr.update(active=False), _send_show, _stop_hide
+                return _noop, False, *no_change[:-4], gr.update(active=False), _send_show, _stop_hide, gr.update(visible=False)
 
             msgs = chat_interface.get_session_messages(active_id)
             still_pending = any(m["content"] == "__PENDING__" for m in msgs)
 
             if still_pending:
                 display = _build_display(msgs)
-                return gr.update(value=display), True, *no_change[:-3], gr.update(active=True), _send_hide, _stop_show
+                return gr.update(value=display), True, *no_change[:-4], gr.update(active=True), _send_hide, _stop_show, gr.update(visible=False)
 
             # Response arrived — show it, deactivate timer, restore send button
             display = _build_display(msgs)
@@ -785,9 +794,48 @@ def create_gradio_ui():
             return (gr.update(value=display), False,
                     gr.update(value=html), active_id,
                     row_upd, *btn_upds, *text_upds, gr.update(), files_upd, gr.update(active=False),
-                    _send_show, _stop_hide)
+                    _send_show, _stop_hide, gr.update(visible=bool(last_resp)))
 
         timer.tick(poll_session, [active_session_id, was_pending], timer_outputs, show_progress=False)
+
+        # ── Eval button — LLM-as-judge quality check ──────────────────────────
+        def _msg_role_content(msg):
+            """Safely extract (role, content) from a chatbot message regardless of format."""
+            if isinstance(msg, dict):
+                role = msg.get("role", "") or ""
+                content = msg.get("content", "") or ""
+            else:
+                # Gradio ChatMessage object or similar
+                role = getattr(msg, "role", "") or ""
+                content = getattr(msg, "content", "") or ""
+            if isinstance(content, list):
+                content = " ".join(c if isinstance(c, str) else (c.get("text", "") if isinstance(c, dict) else "") for c in content).strip()
+            return str(role), str(content)
+
+        def run_evaluation(chatbot_history):
+            """Extract last Q&A, evaluate with Claude Haiku, stream result to eval_panel."""
+            yield gr.update(visible=False), gr.update(visible=True, value="*⏳ Evaluating answer quality…*")
+
+            last_answer = ""
+            last_question = ""
+            for msg in reversed(chatbot_history or []):
+                role, content = _msg_role_content(msg)
+                if role == "assistant" and not last_answer:
+                    # Skip the thinking HTML placeholder
+                    if content and not content.strip().startswith("<span"):
+                        last_answer = content
+                elif role == "user" and last_answer and not last_question:
+                    last_question = content
+                    break
+
+            if not last_question or not last_answer:
+                yield gr.update(visible=True), gr.update(visible=True, value="⚠️ Could not find a valid question/answer pair to evaluate.")
+                return
+
+            result = chat_interface.evaluate_response(last_question, last_answer)
+            yield gr.update(visible=True), gr.update(visible=True, value=result)
+
+        eval_btn.click(run_evaluation, [chatbot], [eval_btn, eval_panel])
 
         # ── Session selection ─────────────────────────────────────────────────
         def on_session_select(sid):
@@ -800,11 +848,12 @@ def create_gradio_ui():
                     gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
                     row_upd, *btn_upds, *text_upds,
                     gr.update(visible=False, value=""), has_pending,
-                    gr.update(visible=not has_pending), gr.update(visible=has_pending))
+                    gr.update(visible=not has_pending), gr.update(visible=has_pending),
+                    gr.update(visible=False), gr.update(visible=False, value=""))
 
         session_click_txt.change(
             on_session_select, session_click_txt,
-            [chatbot, session_list_html, active_session_id] + views + [sugg_row] + sugg_btns + sugg_texts + [cited_files, was_pending, send_btn, stop_btn],
+            [chatbot, session_list_html, active_session_id] + views + [sugg_row] + sugg_btns + sugg_texts + [cited_files, was_pending, send_btn, stop_btn, eval_btn, eval_panel],
             show_progress=False,
         )
 
@@ -815,11 +864,12 @@ def create_gradio_ui():
                     gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
                     row_upd, *btn_upds, *text_upds,
                     gr.update(visible=False, value=""), False,
-                    _send_show, _stop_hide)
+                    _send_show, _stop_hide,
+                    gr.update(visible=False), gr.update(visible=False, value=""))
 
         new_session_btn.click(
             new_session_handler, None,
-            [chatbot, session_list_html, active_session_id] + views + [sugg_row] + sugg_btns + sugg_texts + [cited_files, was_pending, send_btn, stop_btn],
+            [chatbot, session_list_html, active_session_id] + views + [sugg_row] + sugg_btns + sugg_texts + [cited_files, was_pending, send_btn, stop_btn, eval_btn, eval_panel],
         )
 
         def _on_del_trigger(value):

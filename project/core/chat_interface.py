@@ -222,7 +222,7 @@ class ChatInterface:
                 args = {}
             if name == "search_child_chunks":
                 query = args.get("query", "")
-                return f'🔍 Searched: <em>"{query[:100]}"</em>' if query else "🔍 Search completed"
+                return f'🔍 Searched & reranked: <em>"{query[:100]}"</em>' if query else "🔍 Search & rerank completed"
             if name == "retrieve_parent_chunks":
                 return "📄 Retrieved document chunk"
             if name == "retrieve_parent_chunks_batch":
@@ -355,6 +355,51 @@ class ChatInterface:
             return f"❌ Error: {str(e)}", session_id
         finally:
             self.rag_system.observability.flush()
+
+    def evaluate_response(self, question: str, answer: str) -> str:
+        """Evaluate an AI answer using Claude Haiku as judge. Returns a markdown quality report."""
+        try:
+            import config
+            from langchain_anthropic import ChatAnthropic
+            from langchain_core.messages import SystemMessage, HumanMessage
+
+            judge_llm = ChatAnthropic(
+                model="claude-haiku-4-5-20251001",
+                api_key=config.ANTHROPIC_API_KEY,
+                temperature=0.1,
+                max_tokens=600,
+            )
+
+            system_prompt = """You are an expert legal quality assessor evaluating an AI assistant's response to an Australian law question.
+
+Score each dimension from 1–10 and give a brief explanation (1–2 sentences).
+
+Output this exact markdown format with no extra text before or after:
+
+## Answer Quality Assessment
+
+**Relevance**: X/10
+*[Did the answer directly address what was asked?]*
+
+**Legal Accuracy**: X/10
+*[Are the legal principles, rules, and case holdings stated correctly?]*
+
+**Citation Plausibility**: X/10
+*[Do the cited cases/legislation look plausible and relevant? Note: actual source documents cannot be verified.]*
+
+**Completeness**: X/10
+*[Did the answer cover all important aspects of the question?]*
+
+---
+**Overall**: X.X/10 — [one sentence verdict]"""
+
+            response = judge_llm.invoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"**QUESTION:**\n{question}\n\n**ANSWER:**\n{answer}"),
+            ])
+            return response.content
+        except Exception as e:
+            return f"⚠️ Evaluation failed: {str(e)}"
 
     def clear_session(self, session_id: str | None = None):
         self.rag_system.reset_thread(thread_id=session_id)

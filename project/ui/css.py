@@ -560,4 +560,33 @@ h1, h2, h3, h4, h5, h6, p, span, div { color: inherit; }
 #confirm-delete-confirm-btn button:hover {
     background-color: #c0392b !important;
 }
+
+/* ── Eval button & panel ── */
+#eval-btn { margin-top: 6px !important; }
+#eval-btn button {
+    background: transparent !important;
+    border: 1px solid #2a2a2a !important;
+    color: #666 !important;
+    font-size: 12px !important;
+    padding: 4px 12px !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+    transition: border-color 0.15s, color 0.15s !important;
+}
+#eval-btn button:hover {
+    border-color: #444 !important;
+    color: #aaa !important;
+}
+#eval-panel {
+    margin-top: 8px !important;
+    padding: 14px 16px !important;
+    background: #141414 !important;
+    border-radius: 10px !important;
+    border: 1px solid #242424 !important;
+}
+#eval-panel p, #eval-panel li { font-size: 13px !important; color: #aaa !important; line-height: 1.6 !important; }
+#eval-panel h2 { font-size: 13px !important; color: #666 !important; text-transform: uppercase !important; letter-spacing: 0.5px !important; margin-bottom: 10px !important; font-weight: 600 !important; }
+#eval-panel strong { color: #ccc !important; }
+#eval-panel em { color: #777 !important; font-style: normal !important; }
+#eval-panel hr { border-color: #222 !important; margin: 10px 0 !important; }
 """
