@@ -184,19 +184,22 @@ html, body {
     pointer-events: none !important;
 }
 
-/* Admin / History sidebar buttons */
-#admin-btn, #history-btn {
+/* Admin link button in sidebar */
+.admin-link-btn {
+    display: block !important;
     background: transparent !important;
     border: none !important;
     color: #777 !important;
     width: 100% !important;
     text-align: left !important;
-    justify-content: flex-start !important;
     border-radius: 8px !important;
     padding: 7px 10px !important;
     font-size: 13px !important;
+    text-decoration: none !important;
+    cursor: pointer !important;
+    box-sizing: border-box !important;
 }
-#admin-btn:hover, #history-btn:hover { background: #1c1c1c !important; color: #ddd !important; }
+.admin-link-btn:hover { background: #1c1c1c !important; color: #ddd !important; }
 
 /* Health status */
 #health-md { padding: 6px 10px 0 !important; font-size: 11px !important; }

@@ -31,6 +31,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from auth.clerk import verify_clerk_token, make_session_cookie, read_session_cookie
 from ui.gradio_app import create_gradio_ui, _SIDEBAR_HEAD, _enter_js, _theme
+from ui.admin_app import create_admin_ui
 from ui.css import custom_css
 import config
 
@@ -164,6 +165,10 @@ print("\n🔨 Creating RAG Assistant...")
 _demo = create_gradio_ui()
 print("✅ RAG Assistant ready.")
 
+print("🔨 Creating Admin Panel...")
+_admin_demo = create_admin_ui(_demo._rag_system, _demo._doc_manager)
+print("✅ Admin Panel ready.")
+
 app = FastAPI(docs_url=None, redoc_url=None)
 
 # ── Auth middleware ───────────────────────────────────────────────────────────
@@ -220,6 +225,11 @@ async def logout():
     return response
 
 
+@app.get("/admin")
+async def admin_redirect():
+    return RedirectResponse("/admin/", status_code=308)
+
+
 @app.get("/health")
 async def health():
     if hasattr(_demo, "_rag_system"):
@@ -227,6 +237,17 @@ async def health():
     return {"ok": True}
 
 # ── Mount Gradio ──────────────────────────────────────────────────────────────
+
+# Add admin Gradio internal paths to open prefixes so queue/websocket calls work
+_OPEN_PREFIXES = _OPEN_PREFIXES + ("/admin/queue/", "/admin/run/", "/admin/_", "/admin/info", "/admin/config")
+
+# Mount admin FIRST — more specific route must come before the catch-all "/"
+app = gr.mount_gradio_app(
+    app, _admin_demo, path="/admin",
+    allowed_paths=[config.DOCUMENTS_DIR],
+    theme=_theme,
+    footer_links=[],
+)
 
 app = gr.mount_gradio_app(
     app, _demo, path="/",
