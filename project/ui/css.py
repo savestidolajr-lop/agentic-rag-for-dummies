@@ -561,8 +561,50 @@ h1, h2, h3, h4, h5, h6, p, span, div { color: inherit; }
     background-color: #c0392b !important;
 }
 
+/* ── Namespace status overview ── */
+#ns-status-row { align-items: center !important; gap: 6px !important; margin-bottom: 12px !important; }
+#ns-refresh-btn button {
+    background: transparent !important; border: 1px solid #2a2a2a !important;
+    color: #555 !important; border-radius: 6px !important; font-size: 13px !important;
+    padding: 2px 8px !important; min-width: 32px !important; height: 28px !important;
+}
+#ns-refresh-btn button:hover { border-color: #444 !important; color: #aaa !important; }
+.ns-overview { width: 100%; }
+.ns-indexing-banner {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: #1a2a1a; border: 1px solid #2a4a2a; border-radius: 8px;
+    padding: 8px 12px; font-size: 12px; color: #7ec87e; margin-bottom: 10px;
+}
+.ns-pct { margin-left: auto; color: #5cb85c; font-weight: 600; white-space: nowrap; }
+.ns-progress-bar {
+    width: 100%; height: 3px; background: #1e3a1e; border-radius: 2px; margin-top: 4px;
+}
+.ns-progress-fill { height: 100%; background: #10a37f; border-radius: 2px; transition: width 0.4s; }
+.ns-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.ns-pill {
+    display: flex; align-items: center; gap: 6px;
+    background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 20px;
+    padding: 4px 10px; font-size: 12px;
+}
+.ns-pill-active { border-color: #2a4a2a; background: #1a2a1a; }
+.ns-pill-name { color: #888; }
+.ns-pill-count {
+    background: #222; color: #555; border-radius: 10px;
+    padding: 1px 7px; font-size: 11px;
+}
+.ns-pill-active .ns-pill-count { background: #1e3a1e; color: #7ec87e; }
+.ns-empty { font-size: 12px; color: #444; padding: 4px 2px; }
+
+/* ── Hide Gradio 6 per-message action buttons and native loading bubble ── */
+#chatbot .options,
+#chatbot .option,
+#chatbot .extra-feedback,
+#chatbot .extra-feedback-options,
+#chatbot .message-content.svelte-stpvyx,
+#chatbot .container.svelte-stpvyx { display: none !important; }
+
 /* ── Eval button & panel ── */
-#eval-btn { margin-top: 6px !important; }
+#eval-btn { display: none !important; }
 #eval-btn button {
     background: transparent !important;
     border: 1px solid #2a2a2a !important;

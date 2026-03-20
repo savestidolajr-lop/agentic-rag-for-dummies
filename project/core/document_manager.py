@@ -3,6 +3,8 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import shutil
+import json
+from datetime import datetime
 import config
 from utils import pdfs_to_markdowns
 
@@ -14,23 +16,107 @@ class DocumentManager:
         self.markdown_dir.mkdir(parents=True, exist_ok=True)
         self.documents_dir = Path(config.DOCUMENTS_DIR)
         self.documents_dir.mkdir(parents=True, exist_ok=True)
+        self.status_path = Path(config.MARKDOWN_DIR).parent / "indexing_status.json"
+
+    # ── Indexing status (persists to disk so survives page refreshes) ─────────
+
+    def _status_path_for(self, namespace: str | None) -> Path:
+        key = (namespace or "root").replace("/", "_").replace(" ", "_")
+        return self.status_path.parent / f"indexing_status_{key}.json"
+
+    def _write_status(self, operation: str, namespace: str | None = None,
+                      filename: str | None = None, progress: float = 0.0,
+                      done: int = 0, total: int = 0):
+        try:
+            self._status_path_for(namespace).write_text(json.dumps({
+                "operation": operation,
+                "namespace": namespace,
+                "filename": filename,
+                "progress": round(progress, 2),
+                "done": done,
+                "total": total,
+                "updated_at": datetime.utcnow().isoformat(),
+            }), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _clear_status(self, namespace: str | None = None):
+        """Clear status for a specific namespace, or all status files if namespace is None."""
+        try:
+            if namespace is not None:
+                p = self._status_path_for(namespace)
+                if p.exists():
+                    p.unlink()
+            else:
+                for p in self.status_path.parent.glob("indexing_status_*.json"):
+                    p.unlink()
+                if self.status_path.exists():
+                    self.status_path.unlink()
+        except Exception:
+            pass
+
+    def get_indexing_status(self) -> list[dict] | None:
+        """Return list of all active indexing statuses, or None if all idle/stale."""
+        statuses = []
+        try:
+            for p in self.status_path.parent.glob("indexing_status_*.json"):
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                    updated = datetime.fromisoformat(data.get("updated_at", "2000-01-01"))
+                    if (datetime.utcnow() - updated).total_seconds() > 1800:
+                        p.unlink()
+                        continue
+                    statuses.append(data)
+                except Exception:
+                    continue
+            # Also check legacy single-file status
+            if self.status_path.exists():
+                try:
+                    data = json.loads(self.status_path.read_text(encoding="utf-8"))
+                    updated = datetime.fromisoformat(data.get("updated_at", "2000-01-01"))
+                    if (datetime.utcnow() - updated).total_seconds() <= 1800:
+                        statuses.append(data)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return statuses if statuses else None
+
+    def get_namespace_summary(self) -> dict[str, int]:
+        """Return {namespace: file_count} from the markdown directory."""
+        summary: dict[str, int] = defaultdict(int)
+        if not self.markdown_dir.exists():
+            return {}
+        for p in self.markdown_dir.rglob("*.md"):
+            try:
+                rel = p.relative_to(self.markdown_dir)
+                ns = "/".join(rel.parts[:-1]) if len(rel.parts) > 1 else "No State"
+                summary[ns] += 1
+            except Exception:
+                continue
+        return dict(sorted(summary.items()))
         
     def add_documents(self, document_paths, state: str | None = None, progress_callback=None):
         if not document_paths:
             return 0, 0
-            
+
         document_paths = [document_paths] if isinstance(document_paths, str) else document_paths
         document_paths = [p for p in document_paths if p and Path(p).suffix.lower() in [".pdf", ".md"]]
-        
+
         if not document_paths:
             return 0, 0
-            
+
         added = 0
         skipped = 0
-            
+        total = len(document_paths)
+
         for i, doc_path in enumerate(document_paths):
+            fname = Path(doc_path).name
+            self._write_status("upload", namespace=state or "No State",
+                               filename=fname, progress=(i + 1) / total,
+                               done=i + 1, total=total)
             if progress_callback:
-                progress_callback((i + 1) / len(document_paths), f"Processing {Path(doc_path).name}")
+                progress_callback((i + 1) / total, f"[{state or 'No State'}] {fname}")
                 
             doc_name = Path(doc_path).stem
             # Keep documents organized by state/namespace if provided
@@ -68,11 +154,12 @@ class DocumentManager:
                 self.rag_system.parent_store.save_many(parent_chunks)
                 
                 added += 1
-                
+
             except Exception as e:
                 print(f"Error processing {doc_path}: {e}")
                 skipped += 1
-            
+
+        self._clear_status(namespace=state or "No State")
         return added, skipped
     
     def get_markdown_files(self):
@@ -136,6 +223,9 @@ class DocumentManager:
         def _process_namespace(state: str | None, paths: list[Path]) -> int:
             nonlocal done, indexed
             count = 0
+            ns_label = state or "No State"
+            ns_total = len(paths)
+            ns_done = 0
             for md_path in paths:
                 try:
                     orig_dir = self.documents_dir / state if state else self.documents_dir
@@ -153,9 +243,14 @@ class DocumentManager:
                 finally:
                     with counter_lock:
                         done += 1
+                        ns_done += 1
+                        self._write_status("reindex", namespace=ns_label,
+                                           filename=md_path.name,
+                                           progress=ns_done / ns_total,
+                                           done=ns_done, total=ns_total)
                         if progress_callback:
-                            ns_label = state or "root"
                             progress_callback(done / total, f"[{ns_label}] {md_path.name} ({done}/{total})")
+            self._clear_status(namespace=ns_label)
             return count
 
         n_workers = min(len(by_namespace), 8)
@@ -171,6 +266,62 @@ class DocumentManager:
                     print(f"Namespace worker failed: {e}")
 
         return indexed
+
+    def delete_namespace(self, state: str) -> dict:
+        """Delete all data for a specific state/namespace across all storages.
+        Returns a summary dict with counts of what was removed."""
+        summary = {"vectors": 0, "parent_chunks": 0, "markdown_files": 0, "original_files": 0}
+
+        # 1. Qdrant vectors
+        # state stored as "all" when no state was set, but namespace folder is "No State"
+        qdrant_state = "all" if state == "No State" else state
+        summary["vectors"] = self.rag_system.vector_db.delete_by_state(
+            self.rag_system.collection_name, qdrant_state
+        )
+
+        # 2. Parent store JSON files
+        summary["parent_chunks"] = self.rag_system.parent_store.delete_by_state(qdrant_state)
+
+        # 3. Markdown files
+        if state == "No State":
+            md_dir = self.markdown_dir
+            md_files = [p for p in md_dir.glob("*.md")]
+        else:
+            md_dir = self.markdown_dir / state
+            md_files = list(md_dir.rglob("*.md")) if md_dir.exists() else []
+        for p in md_files:
+            try:
+                p.unlink()
+                summary["markdown_files"] += 1
+            except Exception:
+                pass
+        if state != "No State" and md_dir.exists():
+            try:
+                md_dir.rmdir()  # remove only if now empty
+            except Exception:
+                pass
+
+        # 4. Original document files (PDFs)
+        if state == "No State":
+            orig_dir = self.documents_dir
+            orig_files = [p for p in orig_dir.iterdir() if p.is_file()] if orig_dir.exists() else []
+        else:
+            orig_dir = self.documents_dir / state
+            orig_files = list(orig_dir.rglob("*")) if orig_dir.exists() else []
+            orig_files = [p for p in orig_files if p.is_file()]
+        for p in orig_files:
+            try:
+                p.unlink()
+                summary["original_files"] += 1
+            except Exception:
+                pass
+        if state != "No State" and orig_dir.exists():
+            try:
+                orig_dir.rmdir()
+            except Exception:
+                pass
+
+        return summary
 
     def clear_all(self):
         if self.markdown_dir.exists():

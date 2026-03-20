@@ -240,11 +240,11 @@ class ChatInterface:
             return
 
         session_id = self._append_history("user", message.strip(), session_id=session_id)
-        yield "", session_id, []  # Signal session_id to caller before blocking on agent
+        activity_steps: list[str] = ["💬 Reading your question..."]
+        yield "", session_id, activity_steps  # Show first step immediately before graph starts
 
         full_response = ""
         last_state = None
-        activity_steps: list[str] = []
         active_filter = (state_filter or "").strip()
         active_filter = "" if active_filter.lower() in ("all states", "all", "") else active_filter
         graph_input = {"messages": [HumanMessage(content=message.strip())]}
@@ -254,6 +254,8 @@ class ChatInterface:
         _tool_acc: dict = {}   # accumulates tool_call_chunks by index
         _prev_node: str = ""
         _orchestrator_visits: int = 0
+        _is_multi_question: bool = False   # True once we see >1 rewrittenQuestions
+        _agg_output: str = ""              # tracks aggregate_answers streaming separately
         try:
             for namespace, mode, data in self.rag_system.agent_graph.stream(
                 graph_input,
@@ -267,7 +269,10 @@ class ChatInterface:
 
                     # Fire activity step once per node *entry* (when node changes)
                     if node and node != _prev_node:
-                        if node == "rewrite_query":
+                        if node == "summarize_history":
+                            activity_steps = activity_steps + ["🗂 Reviewing conversation history..."]
+                            yield "", session_id, activity_steps
+                        elif node == "rewrite_query":
                             activity_steps = activity_steps + ["🧠 Analysing your question..."]
                             yield "", session_id, activity_steps
                         elif node == "orchestrator":
@@ -303,27 +308,59 @@ class ChatInterface:
                             if not full_response:
                                 yield "", session_id, activity_steps
 
-                    # Final answer streaming
-                    if isinstance(chunk, AIMessageChunk) and chunk.content:
-                        if metadata.get("langgraph_node") == "aggregate_answers":
+                    # Final answer streaming.
+                    # For multi-question queries each orchestrator runs in parallel — capturing all
+                    # of them concatenates/interleaves their outputs.  Instead, for multi-question
+                    # we only capture the aggregate_answers synthesis; for single-question we capture
+                    # the orchestrator's direct final answer (aggregate_answers is a pass-through).
+                    if (isinstance(chunk, AIMessageChunk)
+                            and chunk.content
+                            and not chunk.tool_call_chunks):
+                        if node == "aggregate_answers":
+                            # aggregate_answers streamed token (multi-question synthesis)
+                            _agg_output += chunk.content
+                            full_response = _agg_output
+                            yield full_response, session_id, activity_steps
+                        elif node in ("orchestrator", "fallback_response") and not _is_multi_question:
+                            # single-question: orchestrator streams its final answer directly
                             full_response += chunk.content
                             yield full_response, session_id, activity_steps
 
                 elif mode == "values":
                     if not namespace:  # root state only — used for fallback extraction
                         last_state = data
+                        # Detect multi-question mode as soon as rewrite_query resolves
+                        if not _is_multi_question:
+                            _is_multi_question = len(data.get("rewrittenQuestions", [])) > 1
 
             # Fallback: if token streaming produced nothing, extract from final root state
             if not full_response and last_state:
                 msgs = last_state.get("messages", [])
                 for msg in reversed(msgs):
-                    if (hasattr(msg, "content") and msg.content
+                    content = msg.content if hasattr(msg, "content") else None
+                    if isinstance(content, list):  # convert structured content to plain text
+                        content = " ".join(
+                            part.get("text", "") if isinstance(part, dict) else str(part)
+                            for part in content
+                        ).strip()
+                    if (content
                             and not getattr(msg, "tool_calls", None)
                             and not isinstance(msg, HumanMessage)
                             and not isinstance(msg, AIMessageChunk)):
-                        full_response = msg.content
+                        full_response = content
                         yield full_response, session_id, activity_steps
                         break
+            # Secondary fallback: reconstruct from agent_answers in last state
+            if not full_response and last_state:
+                answers = last_state.get("agent_answers", [])
+                if answers:
+                    sorted_answers = sorted(answers, key=lambda x: x.get("index", 0))
+                    combined = "\n\n".join(
+                        a.get("answer", "") for a in sorted_answers if a.get("answer")
+                    )
+                    if combined:
+                        full_response = combined
+                        yield full_response, session_id, activity_steps
 
         except Exception as e:
             full_response = f"❌ Error: {str(e)}"

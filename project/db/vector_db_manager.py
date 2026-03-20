@@ -62,6 +62,42 @@ class VectorDbManager:
         except Exception as e:
             print(f"Warning: could not delete collection {collection_name}: {e}")
 
+    def delete_by_state(self, collection_name: str, state: str) -> int:
+        """Delete all vectors whose metadata.state matches the given state. Returns deleted count."""
+        try:
+            result = self.__client.delete(
+                collection_name=collection_name,
+                points_selector=qmodels.FilterSelector(
+                    filter=qmodels.Filter(
+                        must=[qmodels.FieldCondition(
+                            key="metadata.state",
+                            match=qmodels.MatchValue(value=state),
+                        )]
+                    )
+                ),
+            )
+            return result.status.value if hasattr(result, "status") else 0
+        except Exception as e:
+            print(f"Warning: could not delete vectors for state '{state}': {e}")
+            return 0
+
+    def count_by_state(self, collection_name: str, state: str) -> int:
+        """Count vectors for a given state."""
+        try:
+            result = self.__client.count(
+                collection_name=collection_name,
+                count_filter=qmodels.Filter(
+                    must=[qmodels.FieldCondition(
+                        key="metadata.state",
+                        match=qmodels.MatchValue(value=state),
+                    )]
+                ),
+                exact=True,
+            )
+            return result.count
+        except Exception:
+            return 0
+
     def get_collection(self, collection_name) -> QdrantVectorStore:
         try:
             return QdrantVectorStore(

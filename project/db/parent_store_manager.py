@@ -46,6 +46,19 @@ class ParentStoreManager:
         unique_ids = set(parent_ids)
         return [self.load_content(pid) for pid in sorted(unique_ids, key=self._get_sort_key)]
     
+    def delete_by_state(self, state: str) -> int:
+        """Delete all parent JSON files whose metadata.state matches. Returns deleted count."""
+        deleted = 0
+        for p in list(self.__store_path.glob("*.json")):
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if data.get("metadata", {}).get("state") == state:
+                    p.unlink()
+                    deleted += 1
+            except Exception:
+                continue
+        return deleted
+
     def clear_store(self) -> None:
         if self.__store_path.exists():
             shutil.rmtree(self.__store_path)

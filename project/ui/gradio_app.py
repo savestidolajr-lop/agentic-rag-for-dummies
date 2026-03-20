@@ -1,4 +1,5 @@
 import re
+from urllib.parse import quote
 import gradio as gr
 import config
 from pathlib import Path
@@ -96,7 +97,7 @@ def _get_cited_html(text: str) -> str:
         seen.add(fname)
         safe = fname.replace('"', "")
         links.append(
-            f'<a href="/files/{safe}" class="cited-link" download="{safe}">📄 {safe}</a>'
+            f'<a href="/download/{quote(safe)}" class="cited-link" download="{safe}">📄 {safe}</a>'
         )
     if not links:
         return ""
@@ -258,7 +259,7 @@ def create_gradio_ui():
             <tr>
                 <td><span class="state-badge">{f["state"]}</span></td>
                 <td class="filename-cell">📄 {f["filename"]}</td>
-                <td><a href="/files/{safe}" download="{safe}" class="dl-btn">↓ Download</a></td>
+                <td><a href="/download/{quote(safe)}" download="{safe}" class="dl-btn">↓ Download</a></td>
             </tr>"""
 
         stats = " · ".join(f'<b>{s}</b>: {c}' for s, c in sorted(state_counts.items()))
@@ -310,6 +311,42 @@ def create_gradio_ui():
         if init_error:
             parts.append(f"⚠ {init_error}")
         return "  ·  ".join(parts)
+
+    def render_namespace_status():
+        summary  = doc_manager.get_namespace_summary()
+        statuses = doc_manager.get_indexing_status()  # list[dict] or None
+
+        html = '<div class="ns-overview">'
+
+        active_namespaces = set()
+        if statuses:
+            for status in statuses:
+                op    = status.get("operation", "indexing").capitalize()
+                ns    = status.get("namespace") or "—"
+                fname = status.get("filename") or ""
+                done  = status.get("done", 0)
+                total = status.get("total", 0)
+                pct   = int(status.get("progress", 0) * 100)
+                bar   = f'<div class="ns-progress-bar"><div class="ns-progress-fill" style="width:{pct}%"></div></div>'
+                html += (
+                    f'<div class="ns-indexing-banner">'
+                    f'⏳ {op} in progress &nbsp;·&nbsp; <strong>[{ns}]</strong> {fname}'
+                    f'<span class="ns-pct">{done}/{total} &nbsp; {pct}%</span>'
+                    f'{bar}</div>'
+                )
+                active_namespaces.add(ns)
+
+        if not summary:
+            html += '<div class="ns-empty">No namespaces indexed yet.</div>'
+        else:
+            html += '<div class="ns-grid">'
+            for ns, count in summary.items():
+                cls = "ns-pill ns-pill-active" if ns in active_namespaces else "ns-pill"
+                html += f'<div class="{cls}"><span class="ns-pill-name">{ns}</span><span class="ns-pill-count">{count}</span></div>'
+            html += '</div>'
+
+        html += '</div>'
+        return html
 
     def upload_handler(files, state, progress=gr.Progress()):
         if not files:
@@ -430,6 +467,8 @@ def create_gradio_ui():
                         height=640, show_label=False,
                         elem_id="chatbot",
                         placeholder="Ask me anything about your documents.",
+                        buttons=[],
+                        feedback_options=None,
                     )
 
                     agent_activity = gr.HTML("", visible=False, elem_id="agent-activity")
@@ -472,6 +511,10 @@ def create_gradio_ui():
                         # ── Tab 1: Documents ───────────────────────────
                         with gr.TabItem("📄 Documents"):
 
+                            with gr.Row(elem_id="ns-status-row"):
+                                ns_status_html = gr.HTML(value=render_namespace_status(), elem_id="ns-status")
+                                ns_refresh_btn = gr.Button("↻", size="sm", scale=0, min_width=32, elem_id="ns-refresh-btn")
+
                             with gr.Row():
                                 state_dropdown = gr.Dropdown(
                                     label="Upload to State", choices=get_state_choices(),
@@ -505,7 +548,54 @@ def create_gradio_ui():
                             with gr.Accordion("Danger Zone", open=False, elem_id="danger-zone-accordion"):
                                 reindex_btn    = gr.Button("🔄 Re-index All Documents", elem_id="reindex-btn")
                                 reindex_status = gr.Markdown("", elem_id="reindex-status")
+
+                            with gr.Column(visible=False, elem_id="confirm-reindex-panel") as confirm_reindex_panel:
+                                gr.HTML("""
+                                <div style="background:#1a1a0a;border:1px solid #7a6a00;border-radius:10px;padding:16px 18px;margin-top:12px;">
+                                    <div style="color:#ffd700;font-size:15px;font-weight:700;margin-bottom:6px;">⚠️ Re-index All Documents</div>
+                                    <div style="color:#ccc;font-size:13px;line-height:1.5;">
+                                        This will <strong style="color:#fff;">clear all vectors and parent chunks</strong> then rebuild the index from scratch.<br>
+                                        Original PDFs and markdown files are preserved.<br>
+                                        <span style="color:#ffcc00;">This may take a long time for large document sets.</span>
+                                    </div>
+                                </div>
+                                """)
+                                confirm_reindex_input = gr.Textbox(
+                                    placeholder='Type  REINDEX  to confirm',
+                                    show_label=False,
+                                    elem_id="confirm-reindex-input",
+                                    max_lines=1,
+                                )
+                                with gr.Row():
+                                    confirm_reindex_btn = gr.Button("Confirm Re-index", variant="stop", scale=1, elem_id="confirm-reindex-confirm-btn")
+                                    cancel_reindex_btn  = gr.Button("Cancel", scale=1, elem_id="confirm-reindex-cancel-btn")
+
+
+                                gr.HTML('<div style="margin-top:12px;margin-bottom:6px;font-size:12px;color:#aaa;">Delete by State</div>')
+                                with gr.Row():
+                                    del_state_dropdown = gr.Dropdown(
+                                        choices=get_state_choices(),
+                                        value=None,
+                                        label="Select state to delete",
+                                        scale=3,
+                                        elem_id="del-state-dropdown",
+                                    )
+                                    del_state_btn = gr.Button("🗑 Delete State", variant="stop", scale=1, elem_id="del-state-btn")
+                                del_state_status = gr.Markdown("", elem_id="del-state-status")
+
                                 clear_docs_btn = gr.Button("🗑 Clear All Documents", elem_id="clear-all-btn")
+
+                            with gr.Column(visible=False, elem_id="confirm-del-state-panel") as confirm_del_state_panel:
+                                confirm_del_state_html = gr.HTML("")
+                                confirm_del_state_input = gr.Textbox(
+                                    placeholder="Type  DELETE  to confirm",
+                                    show_label=False,
+                                    elem_id="confirm-del-state-input",
+                                    max_lines=1,
+                                )
+                                with gr.Row():
+                                    confirm_del_state_btn = gr.Button("Confirm Delete", variant="stop", scale=1, elem_id="confirm-del-state-confirm-btn")
+                                    cancel_del_state_btn  = gr.Button("Cancel", scale=1, elem_id="confirm-del-state-cancel-btn")
 
                             with gr.Column(visible=False, elem_id="confirm-delete-panel") as confirm_panel:
                                 gr.HTML("""
@@ -589,6 +679,9 @@ def create_gradio_ui():
         # ── Timer — polls active session every 2 s for background responses ──
         # Starts inactive; activated only when a message is in-flight
         timer = gr.Timer(value=2.0, active=False)
+
+        # ── Admin timer — polls indexing status every 4 s while an operation is active ──
+        admin_timer = gr.Timer(value=4.0, active=True)
 
         # ── Event wiring ─────────────────────────────────────────────────────
 
@@ -696,7 +789,7 @@ def create_gradio_ui():
                 rag_system.set_state_filter(None)
 
             streamer = chat_interface.stream_response(message, session_id=session_id, state_filter=selected_state)
-            _, new_session_id, _ = next(streamer)  # saves user message, returns session_id immediately
+            _, new_session_id, initial_steps = next(streamer)  # saves user message, returns session_id + first activity step
 
             sessions = chat_interface.get_sessions()
             html = _render_sessions_html(sessions, active_id=new_session_id)
@@ -716,19 +809,21 @@ def create_gradio_ui():
                         row_upd2, *btn_upds2, *text_upds2, activity_upd, files_upd, False,
                         gr.update(active=False), _send_show, _stop_hide, gr.update(visible=False))
 
-            # Show thinking indicator while agent is working
+            # Show thinking indicator + first activity step immediately
             yield (base_display + [{"role": "assistant", "content": _THINKING_HTML}],
                    "", gr.update(value=html), new_session_id,
-                   row_upd, *btn_upds, *text_upds, no_activity, no_files, False,
+                   row_upd, *btn_upds, *text_upds, _render_activity(initial_steps), no_files, False,
                    gr.update(active=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=False))
 
             # Stream tokens and activity steps as they arrive
             partial_response = ""
+            last_content = ""   # tracks the latest non-empty response (loop var can be reset to "" by activity-only yields)
             activity_steps = []
             try:
                 for partial_response, _, activity_steps in streamer:
                     activity_upd = _render_activity(activity_steps)
                     if partial_response:
+                        last_content = partial_response
                         display = base_display + [{"role": "assistant", "content": _clean_message(partial_response)}]
                         yield (display, "", gr.update(), new_session_id,
                                row_upd, *btn_upds, *text_upds, gr.update(), no_files, False,
@@ -740,9 +835,9 @@ def create_gradio_ui():
                                row_upd, *btn_upds, *text_upds, activity_upd, no_files, False,
                                gr.update(active=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=False))
             except Exception as e:
-                partial_response = f"❌ Error: {str(e)}"
+                last_content = f"❌ Error: {str(e)}"
 
-            yield _final_yield(partial_response, new_session_id, activity_steps)
+            yield _final_yield(last_content, new_session_id, activity_steps)
 
         send_btn.click(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat], chat_outputs)
 
@@ -794,7 +889,7 @@ def create_gradio_ui():
             return (gr.update(value=display), False,
                     gr.update(value=html), active_id,
                     row_upd, *btn_upds, *text_upds, gr.update(), files_upd, gr.update(active=False),
-                    _send_show, _stop_hide, gr.update(visible=bool(last_resp)))
+                    _send_show, _stop_hide, gr.update(visible=False))
 
         timer.tick(poll_session, [active_session_id, was_pending], timer_outputs, show_progress=False)
 
@@ -901,7 +996,10 @@ def create_gradio_ui():
 
         # Documents
         add_btn.click(upload_handler, [files_input, state_dropdown],
-                      [files_input, file_table, state_dropdown], show_progress="corner")
+                      [files_input, file_table, state_dropdown], show_progress="corner",
+                      concurrency_limit=None).then(
+            render_namespace_status, None, ns_status_html
+        )
 
         def refresh_docs(state_filter, search_query):
             return render_file_table(state_filter, search_query, 0), gr.update(choices=["All States"] + doc_manager.get_states()), 0, _page_info(0, state_filter, search_query)
@@ -938,6 +1036,64 @@ def create_gradio_ui():
         file_search.change(reset_page, [file_state_filter, file_search], [file_table, file_page, page_info])
         file_state_filter.change(reset_page, [file_state_filter, file_search], [file_table, file_page, page_info])
 
+        # ── Delete by State ───────────────────────────────────────────────────
+
+        def del_state_click(state):
+            if not state or state.lower() in ("all states", "all", ""):
+                gr.Warning("Please select a specific state to delete.")
+                return gr.update(visible=False), gr.update(), ""
+            warn_html = (
+                f'<div style="background:#2a0a0a;border:1px solid #8b2020;border-radius:10px;padding:14px 16px;margin-top:8px;">'
+                f'<div style="color:#ff6b6b;font-size:14px;font-weight:700;margin-bottom:4px;">⚠️ Delete state: {state}</div>'
+                f'<div style="color:#ccc;font-size:13px;line-height:1.5;">'
+                f'This will permanently delete <strong style="color:#fff;">all {state} documents</strong>, '
+                f'their vectors and stored chunks.<br>'
+                f'<span style="color:#ff9999;">This action cannot be undone.</span>'
+                f'</div></div>'
+            )
+            return gr.update(visible=True), gr.update(value=warn_html), ""
+
+        del_state_btn.click(
+            del_state_click,
+            [del_state_dropdown],
+            [confirm_del_state_panel, confirm_del_state_html, confirm_del_state_input],
+        )
+
+        cancel_del_state_btn.click(
+            lambda: (gr.update(visible=False), ""),
+            None, [confirm_del_state_panel, confirm_del_state_input]
+        )
+
+        def confirm_del_state_handler(state, confirm_text):
+            if confirm_text.strip() != "DELETE":
+                gr.Warning("Type  DELETE  (all caps) to confirm.")
+                return gr.update(), gr.update(choices=get_state_choices()), gr.update(visible=True), "", ""
+            if not state or state.lower() in ("all states", "all", ""):
+                gr.Warning("No state selected.")
+                return gr.update(), gr.update(choices=get_state_choices()), gr.update(visible=False), "", ""
+            summary = doc_manager.delete_namespace(state)
+            msg = (
+                f"✅ Deleted **{state}**: "
+                f"{summary['original_files']} files, "
+                f"{summary['markdown_files']} markdown, "
+                f"{summary['parent_chunks']} chunks, "
+                f"{summary['vectors']} vectors removed."
+            )
+            gr.Info(f"State '{state}' deleted.")
+            return (
+                render_file_table(),
+                gr.update(choices=get_state_choices(), value=None),
+                gr.update(visible=False),
+                "",
+                msg,
+            )
+
+        confirm_del_state_btn.click(
+            confirm_del_state_handler,
+            [del_state_dropdown, confirm_del_state_input],
+            [file_table, del_state_dropdown, confirm_del_state_panel, confirm_del_state_input, del_state_status],
+        )
+
         # Show confirmation panel when Clear All is clicked
         clear_docs_btn.click(
             lambda: gr.update(visible=True),
@@ -967,18 +1123,42 @@ def create_gradio_ui():
 
         # ── Re-index ──────────────────────────────────────────────────────────
 
-        def reindex_handler(progress=gr.Progress()):
+        # Step 1: show confirmation panel
+        reindex_btn.click(
+            lambda: gr.update(visible=True),
+            None, confirm_reindex_panel
+        )
+
+        # Cancel
+        cancel_reindex_btn.click(
+            lambda: (gr.update(visible=False), ""),
+            None, [confirm_reindex_panel, confirm_reindex_input]
+        )
+
+        # Step 2: confirm and run
+        def reindex_handler(confirm_text, progress=gr.Progress()):
+            if confirm_text.strip() != "REINDEX":
+                gr.Warning("Type  REINDEX  (all caps) to confirm.")
+                return "", gr.update(), gr.update(visible=True), ""
             total_md = len(list(doc_manager.markdown_dir.rglob("*.md")))
             if total_md == 0:
-                return "⚠️ No documents found to re-index.", gr.update()
+                return "⚠️ No documents found to re-index.", gr.update(), gr.update(visible=False), ""
             indexed = doc_manager.reindex_all(progress_callback=progress)
-            return f"✅ Re-indexed {indexed} of {total_md} documents successfully.", render_file_table()
+            return (
+                f"✅ Re-indexed {indexed} of {total_md} documents successfully.",
+                render_file_table(),
+                gr.update(visible=False),
+                "",
+            )
 
-        reindex_btn.click(
+        confirm_reindex_btn.click(
             reindex_handler,
-            None,
-            [reindex_status, file_table],
-        )
+            [confirm_reindex_input],
+            [reindex_status, file_table, confirm_reindex_panel, confirm_reindex_input],
+        ).then(render_namespace_status, None, ns_status_html)
+
+        ns_refresh_btn.click(render_namespace_status, None, ns_status_html)
+        admin_timer.tick(render_namespace_status, None, ns_status_html, show_progress=False)
 
         # ── AI Settings ───────────────────────────────────────────────────────
 
@@ -1021,8 +1201,9 @@ def create_gradio_ui():
         refresh_history_btn.click(render_history, None, history_box)
         clear_history_btn.click(clear_history_handler, None, history_box)
 
-        # On load — restore pending state if any session was mid-response
+        # On load — restore pending state + namespace status
         demo.load(_refresh_sessions, None, [session_list_html, chatbot, active_session_id, was_pending])
+        demo.load(render_namespace_status, None, ns_status_html)
 
 
     def _health_endpoint():
@@ -1031,22 +1212,35 @@ def create_gradio_ui():
     demo.app.get("/health")(_health_endpoint)
 
     from fastapi import HTTPException
-    from fastapi.responses import FileResponse as _FileResponse
+    from fastapi.responses import StreamingResponse
 
-    @demo.app.get("/files/{filename}")
+    @demo.app.get("/download/{filename}")
     def serve_document(filename: str):
         # Block path traversal
         if "/" in filename or "\\" in filename or ".." in filename:
             raise HTTPException(status_code=400, detail="Invalid filename")
+
+        def stream_file(path: Path, media_type: str, dl_name: str):
+            def _iter():
+                with open(path, "rb") as f:
+                    while chunk := f.read(65536):
+                        yield chunk
+            safe_name = dl_name.replace('"', '\\"')
+            return StreamingResponse(
+                _iter(),
+                media_type=media_type,
+                headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+            )
+
         # PDF first (original uploads)
         docs_dir = Path(config.DOCUMENTS_DIR)
         for p in docs_dir.rglob(filename):
-            return _FileResponse(str(p), filename=filename)
+            return stream_file(p, "application/pdf", filename)
         # Fallback: markdown version
         md_dir = Path(config.MARKDOWN_DIR)
         stem = Path(filename).stem
         for p in md_dir.rglob(stem + ".md"):
-            return _FileResponse(str(p), media_type="text/plain", filename=stem + ".md")
+            return stream_file(p, "text/plain", stem + ".md")
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
     return demo
