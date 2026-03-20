@@ -1,23 +1,51 @@
 custom_css = """
 /* ── Base ── */
 footer { display: none !important; }
+html, body {
+    height: 100vh !important;
+    overflow: hidden !important;
+    background: #1a1a1a !important;
+}
 .gradio-container {
     max-width: 100vw !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+}
+/* Strip ALL Gradio inner container padding/max-width down to #app-root */
+.gradio-container > *,
+.gradio-container > * > *,
+.contain,
+.main,
+.app,
+.fillable {
+    max-width: 100% !important;
     width: 100% !important;
     padding: 0 !important;
     margin: 0 !important;
+    box-sizing: border-box !important;
 }
-.contain, .main, .wrap { max-width: 100% !important; }
-body { background: #1a1a1a !important; }
 
-/* ── Root row: no gap ── */
-#app-root { gap: 0 !important; min-height: 100vh; align-items: stretch; width: 100% !important; }
+/* ── Root row: no gap, full height ── */
+#app-root {
+    gap: 0 !important;
+    height: calc(100vh - 1px) !important;
+    margin-top: 1px !important;
+    overflow: hidden !important;
+    align-items: stretch;
+    width: 100% !important;
+}
 
 /* ── Sidebar ── */
 #sidebar {
     background: #111111 !important;
     padding: 10px 8px !important;
     min-height: 100vh !important;
+    height: 100vh !important;
+    display: flex !important;
+    flex-direction: column !important;
     transition: flex 0.2s ease, min-width 0.2s ease !important;
     overflow: hidden !important;
 }
@@ -32,13 +60,23 @@ body { background: #1a1a1a !important; }
 #sidebar-body {
     display: flex !important;
     flex-direction: column !important;
+    flex: 1 !important;
     gap: 0 !important;
     padding: 0 !important;
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
+    min-height: 0 !important;
 }
 #sidebar-body > * { background: transparent !important; border: none !important; box-shadow: none !important; }
+
+/* Spacer pushes admin/health/profile to bottom.
+   gr.HTML wraps content in a .block div, so we target the block that contains the spacer. */
+.sidebar-spacer { display: block; }
+#sidebar-body > .block:has(.sidebar-spacer) {
+    flex: 1 !important;
+    min-height: 12px !important;
+}
 
 /* Toggle sidebar button — sits at top of sidebar */
 #toggle-sidebar-btn {
@@ -63,9 +101,10 @@ body { background: #1a1a1a !important; }
 
 .sidebar-header {
     color: #ececec;
-    font-size: 15px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 700;
     padding: 4px 10px 12px;
+    letter-spacing: -0.01em;
 }
 .sidebar-label {
     font-size: 11px;
@@ -78,17 +117,18 @@ body { background: #1a1a1a !important; }
 
 /* New chat button */
 #new-chat-btn {
-    background: transparent !important;
-    border: 1px solid #2a2a2a !important;
-    color: #aaa !important;
+    background: #10a37f18 !important;
+    border: 1px solid #10a37f33 !important;
+    color: #10a37f !important;
     width: 100% !important;
     text-align: left !important;
     border-radius: 8px !important;
     padding: 8px 12px !important;
     font-size: 13px !important;
     margin-bottom: 4px !important;
+    font-weight: 500 !important;
 }
-#new-chat-btn:hover { background: #1e1e1e !important; color: #fff !important; border-color: #333 !important; }
+#new-chat-btn:hover { background: #10a37f28 !important; border-color: #10a37f55 !important; color: #16c99a !important; }
 
 /* Session HTML list */
 #session-list {
@@ -116,7 +156,7 @@ body { background: #1a1a1a !important; }
     margin-bottom: 2px;
 }
 .session-item:hover { background: #1c1c1c; color: #ddd; }
-.session-item.session-active { background: #222; color: #ececec; }
+.session-item.session-active { background: #1e1e1e; color: #ececec; border-left: 2px solid #10a37f; border-radius: 0 8px 8px 0; padding-left: 8px !important; }
 .session-item-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-del-btn {
     visibility: hidden;
@@ -159,75 +199,172 @@ body { background: #1a1a1a !important; }
 #admin-btn:hover, #history-btn:hover { background: #1c1c1c !important; color: #ddd !important; }
 
 /* Health status */
-#health-md { padding: 8px 10px 0 !important; font-size: 11px !important; color: #3a3a3a !important; }
-#health-md p { color: #3a3a3a !important; font-size: 11px !important; margin: 0 !important; }
+#health-md { padding: 6px 10px 0 !important; font-size: 11px !important; }
+#health-md p { font-size: 11px !important; margin: 0 !important; color: #484848 !important; }
 
-/* ── Main area ── */
-#main-area { background: #1a1a1a !important; padding: 0 48px !important; }
-
-/* ── Top bar: state filter only ── */
-#main-topbar {
-    align-items: center !important;
-    gap: 8px !important;
-    padding: 14px 0 10px !important;
-    margin-bottom: 10px !important;
-    flex-wrap: nowrap !important;
+/* ── Main area — full height flex column ── */
+#main-area {
+    background: #1a1a1a !important;
+    padding: 0 0 !important;
+    height: 100vh !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+    box-sizing: border-box !important;
 }
 
-/* ── Top-bar: strip ALL block backgrounds ── */
-#main-topbar,
-#main-topbar > *,
-#main-topbar .block,
-#main-topbar .form,
-#main-topbar > div > div {
+/* ── Chat view — fills remaining height ── */
+#chat-view {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    padding: 0 24px !important;
+    box-sizing: border-box !important;
+}
+
+/* All direct children shrink to content by default */
+#chat-view > * { flex-shrink: 0 !important; }
+
+/* Chatbot grows to fill all available space */
+#chatbot {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    height: auto !important;
+    max-height: 100% !important;
+}
+
+/* Gradio's internal chatbot wrapper — must fill the chatbot block */
+#chatbot > div,
+#chatbot .wrap {
+    height: 100% !important;
+    max-height: 100% !important;
+    overflow: hidden !important;
+}
+
+/* The actual scrollable message list */
+#chatbot .bubble-wrap {
+    height: 100% !important;
+    max-height: 100% !important;
+    overflow-y: auto !important;
+}
+
+/* Input rows: never scroll away */
+#input-row { flex-shrink: 0 !important; }
+#input-meta-row { flex-shrink: 0 !important; }
+
+/* ── Admin / History views — fill remaining height, scroll inside ── */
+
+/* Gradio wraps each gr.Column in an outer .block div.
+   display:contents makes those wrappers transparent to the flex layout,
+   so #chat-view / #admin-view / #history-view participate as direct flex items.
+   This means when #chat-view is display:none it truly takes no space. */
+#main-area > *:has(> #chat-view),
+#main-area > *:has(> #admin-view),
+#main-area > *:has(> #history-view) {
+    display: contents !important;
+}
+
+#admin-view, #history-view {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    display: block !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding: 24px 24px !important;
+    box-sizing: border-box !important;
+    height: 100% !important;
+    scrollbar-width: thin !important;
+    scrollbar-color: #2a2a2a transparent !important;
+}
+#admin-view::-webkit-scrollbar { width: 4px; }
+#admin-view::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 4px; }
+
+/* Strip any Gradio inner wrappers from adding margin/padding */
+#admin-view > *,
+#history-view > * {
+    margin-top: 0 !important;
+}
+
+/* Admin tab content area gets a card background */
+#admin-view .tabitem {
+    background: #141414 !important;
+    border: 1px solid #1e1e1e !important;
+    border-top: none !important;
+    border-radius: 0 0 10px 10px !important;
+    padding: 16px !important;
+}
+
+/* Admin inputs */
+#admin-view input,
+#admin-view textarea,
+#admin-view .wrap-inner {
+    background: #1a1a1a !important;
+    border-color: #2a2a2a !important;
+}
+
+/* Pagination row */
+#pagination-row {
+    margin-top: 8px !important;
+    justify-content: center !important;
+    gap: 12px !important;
+}
+#pagination-row button {
     background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
+    border: 1px solid #2a2a2a !important;
+    color: #666 !important;
+    font-size: 12px !important;
+    padding: 4px 12px !important;
+    border-radius: 6px !important;
 }
+#pagination-row button:hover { border-color: #444 !important; color: #aaa !important; }
+#page-info p { font-size: 12px !important; color: #555 !important; }
 
-/* State filter — one line: label then dropdown */
+/* ── Shared dropdown style (model + state filter) ── */
+#model-picker-inline,
 #state-filter {
     display: flex !important;
     flex-direction: row !important;
     align-items: center !important;
-    gap: 6px !important;
     flex-shrink: 0 !important;
-    white-space: nowrap !important;
 }
-#state-filter label {
-    font-size: 12px !important;
-    color: #555 !important;
-    white-space: nowrap !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    flex-shrink: 0 !important;
-    line-height: 1 !important;
-    display: inline !important;
-}
+#state-filter label { display: none !important; }
+#model-picker-inline .wrap,
 #state-filter .wrap {
     flex-shrink: 0 !important;
     min-width: 130px !important;
-    max-width: 160px !important;
 }
+#model-picker-inline .wrap-inner,
 #state-filter .wrap-inner {
     background: transparent !important;
     border: 1px solid #2e2e2e !important;
     border-radius: 6px !important;
-    height: 26px !important;
+    height: 28px !important;
     min-height: unset !important;
+    padding: 0 8px !important;
+    cursor: pointer !important;
 }
+#model-picker-inline .wrap-inner:hover,
+#state-filter .wrap-inner:hover {
+    border-color: #444 !important;
+    background: #1a1a1a !important;
+}
+#model-picker-inline input,
 #state-filter input {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
     font-size: 12px !important;
-    padding: 0 6px !important;
-    height: 24px !important;
+    color: #999 !important;
+    height: 26px !important;
     min-height: unset !important;
-    color: #888 !important;
+    padding: 0 !important;
+    cursor: pointer !important;
 }
+#model-picker-inline svg,
+#state-filter svg { color: #555 !important; width: 12px !important; }
 
 /* ── Chatbot ── */
 #chatbot { border: none !important; background: transparent !important; }
@@ -243,7 +380,7 @@ body { background: #1a1a1a !important; }
 #chatbot button[aria-label="Clear"] { display: none !important; }
 
 /* Message bubbles */
-#chatbot .message { color: #ececec !important; font-size: 13px !important; line-height: 1.65 !important; }
+#chatbot .message { color: #ececec !important; font-size: 14px !important; line-height: 1.7 !important; }
 #chatbot .message p  { color: #ececec !important; margin: 0 0 8px !important; }
 #chatbot .message h1, #chatbot .message h2, #chatbot .message h3 {
     color: #fff !important; font-weight: 600 !important; margin: 12px 0 6px !important;
@@ -291,13 +428,21 @@ body { background: #1a1a1a !important; }
 .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
 
 /* ── Input row ── */
-#input-row { align-items: flex-end !important; gap: 8px !important; margin-top: 4px !important; }
+#input-row {
+    align-items: flex-end !important;
+    gap: 8px !important;
+    margin-top: 4px !important;
+    background: #161616 !important;
+    border: 1px solid #232323 !important;
+    border-radius: 14px !important;
+    padding: 8px 8px 6px !important;
+}
 
-/* ── Input meta row: model pill + disclaimer ── */
+/* ── Input meta row: dropdowns + disclaimer ── */
 #input-meta-row {
     align-items: center !important;
-    gap: 10px !important;
-    padding: 4px 0 2px !important;
+    gap: 8px !important;
+    padding: 4px 2px 2px !important;
     flex-wrap: nowrap !important;
 }
 #input-meta-row > *,
@@ -317,45 +462,20 @@ body { background: #1a1a1a !important; }
     width: 100% !important;
 }
 
-/* ── Inline model picker pill ── */
-#model-picker-inline .wrap-inner {
-    background: #1e1e1e !important;
-    border: 1px solid #333 !important;
-    border-radius: 20px !important;
-    height: 28px !important;
-    min-height: unset !important;
-    padding: 0 10px !important;
-    cursor: pointer !important;
-}
-#model-picker-inline input {
+#user-input textarea {
     background: transparent !important;
     border: none !important;
-    box-shadow: none !important;
-    font-size: 12px !important;
-    color: #bbb !important;
-    height: 26px !important;
-    min-height: unset !important;
-    padding: 0 !important;
-    cursor: pointer !important;
-}
-#model-picker-inline .wrap-inner:hover {
-    border-color: #555 !important;
-    background: #252525 !important;
-}
-#model-picker-inline svg { color: #666 !important; width: 12px !important; }
-#user-input textarea {
-    background: #222222 !important;
-    border: 1px solid #2e2e2e !important;
-    border-radius: 12px !important;
+    border-radius: 8px !important;
     color: #ececec !important;
-    font-size: 13px !important;
-    padding: 10px 14px !important;
+    font-size: 14px !important;
+    padding: 6px 10px !important;
     resize: none !important;
-    min-height: 52px !important;
+    min-height: 44px !important;
     overflow-y: hidden !important;
     field-sizing: content !important;
+    box-shadow: none !important;
 }
-#user-input textarea:focus { border-color: #444 !important; outline: none !important; }
+#user-input textarea:focus { border-color: transparent !important; outline: none !important; box-shadow: none !important; }
 #user-input label { font-size: 0 !important; }
 
 /* ── Send / Stop buttons — perfect circles with unicode icons ── */
@@ -595,13 +715,92 @@ h1, h2, h3, h4, h5, h6, p, span, div { color: inherit; }
 .ns-pill-active .ns-pill-count { background: #1e3a1e; color: #7ec87e; }
 .ns-empty { font-size: 12px; color: #444; padding: 4px 2px; }
 
-/* ── Hide Gradio 6 per-message action buttons and native loading bubble ── */
-#chatbot .options,
-#chatbot .option,
+/* ── Hide feedback/share buttons but keep copy ── */
 #chatbot .extra-feedback,
 #chatbot .extra-feedback-options,
 #chatbot .message-content.svelte-stpvyx,
 #chatbot .container.svelte-stpvyx { display: none !important; }
+
+/* Style the copy button on each message */
+#chatbot .options { display: flex !important; opacity: 0; transition: opacity 0.15s; }
+#chatbot .message-wrap:hover .options { opacity: 1; }
+#chatbot .option {
+    background: transparent !important;
+    border: none !important;
+    color: #444 !important;
+    padding: 2px 5px !important;
+    font-size: 12px !important;
+    cursor: pointer !important;
+    border-radius: 4px !important;
+}
+#chatbot .option:hover { color: #aaa !important; background: #1e1e1e !important; }
+
+/* ── User profile + logout ── */
+#user-profile {
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+}
+.user-profile-card {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 8px 6px;
+    border-top: 1px solid #1e1e1e;
+    margin-top: 4px;
+}
+.user-avatar {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    border-radius: 50%;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: #aaa;
+    flex-shrink: 0;
+}
+.user-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.user-name {
+    font-size: 12px;
+    color: #bbb;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+.user-email-small {
+    font-size: 10px;
+    color: #484848;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+.logout-btn {
+    font-size: 11px;
+    color: #484848;
+    text-decoration: none !important;
+    padding: 3px 7px;
+    border: 1px solid #252525;
+    border-radius: 4px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+}
+.logout-btn:hover { color: #aaa !important; border-color: #444 !important; }
 
 /* ── Eval button & panel ── */
 #eval-btn { display: none !important; }

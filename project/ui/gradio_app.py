@@ -2,6 +2,8 @@ import re
 from urllib.parse import quote
 import gradio as gr
 import config
+from auth.clerk import get_user_id, get_user_info
+from ui.css import custom_css
 from pathlib import Path
 from core.chat_interface import ChatInterface
 from core.document_manager import DocumentManager
@@ -216,6 +218,19 @@ _enter_js = """
 """
 
 
+_theme = gr.themes.Base(
+    primary_hue="neutral", secondary_hue="neutral", neutral_hue="neutral",
+    font=gr.themes.GoogleFont("Inter"),
+).set(
+    body_background_fill="#0d0d0d", body_text_color="#e8e8e8",
+    block_background_fill="#161616", block_border_color="#2d2d2d",
+    input_background_fill="#1a1a1a", input_border_color="#2d2d2d",
+    button_primary_background_fill="#10a37f", button_primary_text_color="#ffffff",
+    button_secondary_background_fill="#232323", button_secondary_text_color="#c8c8c8",
+    button_secondary_border_color="#333",
+)
+
+
 def create_gradio_ui():
     rag_system = RAGSystem()
     init_error = None
@@ -403,22 +418,44 @@ def create_gradio_ui():
     def _render_sessions(sessions, active_id=None):
         return gr.update(value=_render_sessions_html(sessions, active_id))
 
-    def _refresh_sessions():
-        sessions = chat_interface.get_sessions()
+    def _render_user_profile(email: str) -> str:
+        if not email:
+            return ""
+        username = email.split("@")[0].replace(".", " ").title()
+        initial = username[0].upper() if username else "?"
+        return (
+            f'<div class="user-profile-card">'
+            f'<div class="user-avatar">{initial}</div>'
+            f'<div class="user-info">'
+            f'<span class="user-name">{username}</span>'
+            f'<span class="user-email-small">{email}</span>'
+            f'</div>'
+            f'<a href="/auth/logout" class="logout-btn">Sign out</a>'
+            f'</div>'
+        )
+
+    def _refresh_sessions(request: gr.Request):
+        info = get_user_info(dict(request.cookies))
+        user_id = info.get("uid") or None
+        email = info.get("email", "")
+        profile_html = _render_user_profile(email)
+        sessions = chat_interface.get_sessions(user_id=user_id)
         active_id = sessions[-1].get("session_id") if sessions else None
         html_upd = _render_sessions(sessions, active_id)
         display, has_pending = _session_display(active_id)
-        return html_upd, display, active_id, has_pending
+        return user_id, profile_html, html_upd, display, active_id, has_pending
 
-    def _new_session():
-        session_id = chat_interface.create_new_session()
-        sessions = chat_interface.get_sessions()
+    def _new_session(user_id):
+        session_id = chat_interface.create_new_session(user_id=user_id)
+        sessions = chat_interface.get_sessions(user_id=user_id)
         return _render_sessions(sessions, session_id), session_id, []
 
     # ── Build UI ──────────────────────────────────────────────────────────────
 
     with gr.Blocks(title="Case Agent") as demo:
 
+        # Authenticated user id (populated on page load from signed cookie)
+        user_id_state = gr.State(None)
         # Tracks whether the current session is awaiting an AI response
         was_pending = gr.State(False)
 
@@ -430,7 +467,7 @@ def create_gradio_ui():
                 toggle_sidebar_btn = gr.Button("☰", elem_id="toggle-sidebar-btn")
 
                 with gr.Column(elem_id="sidebar-body"):
-                    gr.HTML('<div class="sidebar-header">Case Agent</div>')
+                    gr.HTML('<div class="sidebar-header">⚖ Case Agent</div>')
 
                     new_session_btn = gr.Button("＋  New chat", elem_id="new-chat-btn")
 
@@ -442,29 +479,22 @@ def create_gradio_ui():
                     session_click_txt = gr.Textbox(value="", label="", elem_id="session-click-txt")
                     session_del_txt   = gr.Textbox(value="", label="", elem_id="session-del-txt")
 
-                    gr.HTML('<div class="sidebar-divider"></div>')
+                    gr.HTML('<div class="sidebar-spacer"></div>')
 
                     admin_btn        = gr.Button("⚙  Admin Panel", elem_id="admin-btn")
-                    history_nav_btn  = gr.Button("🕐  History",    elem_id="history-btn")
 
                     health_md = gr.Markdown(format_health_status(), elem_id="health-md")
+
+                    user_profile_html = gr.HTML("", elem_id="user-profile")
 
             # ── Main area ─────────────────────────────────────────────────
             with gr.Column(scale=4, elem_id="main-area"):
 
-                with gr.Row(elem_id="main-topbar"):
-                    state_dropdown_chat = gr.Dropdown(
-                        choices=get_state_choices(), value="All States",
-                        allow_custom_value=True, label="State filter",
-                        elem_id="state-filter", scale=0,
-                        container=False,
-                    )
-
                 # ── Chat view ─────────────────────────────────────────
-                with gr.Column(visible=True) as chat_view:
+                with gr.Column(visible=True, elem_id="chat-view") as chat_view:
 
                     chatbot = gr.Chatbot(
-                        height=640, show_label=False,
+                        height=None, show_label=False,
                         elem_id="chatbot",
                         placeholder="Ask me anything about your documents.",
                         buttons=[],
@@ -500,9 +530,17 @@ def create_gradio_ui():
                             elem_id="model-picker-inline", interactive=True,
                             scale=0, min_width=180,
                         )
+                        state_dropdown_chat = gr.Dropdown(
+                            choices=get_state_choices(), value="NSW",
+                            allow_custom_value=True, label="State filter",
+                            elem_id="state-filter", scale=0,
+                            container=False,
+                        )
+
+                    gr.HTML('<div id="input-disclaimer">AI can make mistakes. Please double-check responses.</div>')
 
                 # ── Admin Panel ────────────────────────────────────────
-                with gr.Column(visible=False) as docs_view:
+                with gr.Column(visible=False, elem_id="admin-view") as docs_view:
 
                     gr.HTML('<div class="view-title">Admin Panel</div>')
 
@@ -663,7 +701,7 @@ def create_gradio_ui():
                                 ai_reset_btn   = gr.Button("↺ Reset to Defaults", scale=1)
 
                 # ── History view ───────────────────────────────────────
-                with gr.Column(visible=False) as history_view:
+                with gr.Column(visible=False, elem_id="history-view") as history_view:
 
                     gr.HTML('<div class="view-title">Chat History</div>')
                     history_box = gr.Textbox(
@@ -673,8 +711,6 @@ def create_gradio_ui():
                     with gr.Row():
                         refresh_history_btn = gr.Button("Refresh")
                         clear_history_btn   = gr.Button("Clear History", variant="stop")
-
-                gr.HTML('<div id="input-disclaimer">AI can make mistakes. Please double-check responses.</div>')
 
         # ── Timer — polls active session every 2 s for background responses ──
         # Starts inactive; activated only when a message is in-flight
@@ -706,7 +742,7 @@ def create_gradio_ui():
                 else:
                     items.append(f'<div class="activity-step activity-step-done">{text}</div>')
             html = f"""
-            <details open class="activity-panel">
+            <details class="activity-panel">
                 <summary class="activity-summary">
                     ⟳ Agent working…
                 </summary>
@@ -773,7 +809,7 @@ def create_gradio_ui():
         toggle_sidebar_btn.click(None, js="() => { document.getElementById('sidebar').classList.toggle('sidebar-collapsed'); }")
 
         # ── Chat handler — streams tokens directly to UI ──────────────────────
-        def chat_handler_ui(message, chat_history, session_id, selected_state):
+        def chat_handler_ui(message, chat_history, session_id, selected_state, user_id):
             row_upd, btn_upds, text_upds = _hidden_sugg
             no_files = gr.update(visible=False, value="")
             no_activity = gr.update(visible=False, value="")
@@ -788,10 +824,10 @@ def create_gradio_ui():
             else:
                 rag_system.set_state_filter(None)
 
-            streamer = chat_interface.stream_response(message, session_id=session_id, state_filter=selected_state)
+            streamer = chat_interface.stream_response(message, session_id=session_id, state_filter=selected_state, user_id=user_id)
             _, new_session_id, initial_steps = next(streamer)  # saves user message, returns session_id + first activity step
 
-            sessions = chat_interface.get_sessions()
+            sessions = chat_interface.get_sessions(user_id=user_id)
             html = _render_sessions_html(sessions, active_id=new_session_id)
             base_display = list(chat_history or []) + [{"role": "user", "content": message.strip()}]
 
@@ -801,7 +837,7 @@ def create_gradio_ui():
                 cited_html = _get_cited_html(partial_response)
                 files_upd = gr.update(visible=bool(cited_html), value=cited_html)
                 activity_upd = _render_activity(activity_steps, done=True)
-                sessions = chat_interface.get_sessions()
+                sessions = chat_interface.get_sessions(user_id=user_id)
                 html = _render_sessions_html(sessions, active_id=new_session_id)
                 final_display = base_display + [{"role": "assistant", "content": _clean_message(partial_response or "No response generated.")}]
                 # has_response = bool(partial_response and partial_response.strip())
@@ -839,14 +875,14 @@ def create_gradio_ui():
 
             yield _final_yield(last_content, new_session_id, activity_steps)
 
-        send_btn.click(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat], chat_outputs)
+        send_btn.click(chat_handler_ui, [user_input, chatbot, active_session_id, state_dropdown_chat, user_id_state], chat_outputs)
 
         # Suggestion buttons
-        def send_suggestion(txt, chat_history, session_id, selected_state):
-            yield from chat_handler_ui(txt, chat_history, session_id, selected_state)
+        def send_suggestion(txt, chat_history, session_id, selected_state, user_id):
+            yield from chat_handler_ui(txt, chat_history, session_id, selected_state, user_id)
 
         for btn, txt_state in zip(sugg_btns, sugg_texts):
-            btn.click(send_suggestion, [txt_state, chatbot, active_session_id, state_dropdown_chat], chat_outputs)
+            btn.click(send_suggestion, [txt_state, chatbot, active_session_id, state_dropdown_chat, user_id_state], chat_outputs)
 
         # ── Timer polling — updates chatbot when background response arrives ──
         # timer_outputs: chatbot, was_pending, session_list_html, active_session_id,
@@ -863,7 +899,7 @@ def create_gradio_ui():
         _send_hide = gr.update(visible=False)
         _stop_hide = gr.update(visible=False)
 
-        def poll_session(active_id, is_pending):
+        def poll_session(active_id, is_pending, user_id):
             _noop = gr.update()
             no_change = [_noop] * (len(timer_outputs) - 2)
 
@@ -884,14 +920,14 @@ def create_gradio_ui():
             row_upd, btn_upds, text_upds = _sugg_updates(options)
             cited_html = _get_cited_html(last_resp)
             files_upd = gr.update(visible=bool(cited_html), value=cited_html)
-            sessions = chat_interface.get_sessions()
+            sessions = chat_interface.get_sessions(user_id=user_id)
             html = _render_sessions_html(sessions, active_id)
             return (gr.update(value=display), False,
                     gr.update(value=html), active_id,
                     row_upd, *btn_upds, *text_upds, gr.update(), files_upd, gr.update(active=False),
                     _send_show, _stop_hide, gr.update(visible=False))
 
-        timer.tick(poll_session, [active_session_id, was_pending], timer_outputs, show_progress=False)
+        timer.tick(poll_session, [active_session_id, was_pending, user_id_state], timer_outputs, show_progress=False)
 
         # ── Eval button — LLM-as-judge quality check ──────────────────────────
         def _msg_role_content(msg):
@@ -933,9 +969,9 @@ def create_gradio_ui():
         eval_btn.click(run_evaluation, [chatbot], [eval_btn, eval_panel])
 
         # ── Session selection ─────────────────────────────────────────────────
-        def on_session_select(sid):
+        def on_session_select(sid, user_id):
             sid = (sid or "").strip()
-            sessions = chat_interface.get_sessions()
+            sessions = chat_interface.get_sessions(user_id=user_id)
             display, has_pending = _session_display(sid)
             html = _render_sessions_html(sessions, active_id=sid)
             row_upd, btn_upds, text_upds = _hidden_sugg
@@ -947,13 +983,13 @@ def create_gradio_ui():
                     gr.update(visible=False), gr.update(visible=False, value=""))
 
         session_click_txt.change(
-            on_session_select, session_click_txt,
+            on_session_select, [session_click_txt, user_id_state],
             [chatbot, session_list_html, active_session_id] + views + [sugg_row] + sugg_btns + sugg_texts + [cited_files, was_pending, send_btn, stop_btn, eval_btn, eval_panel],
             show_progress=False,
         )
 
-        def new_session_handler():
-            html_upd, session_id, history = _new_session()
+        def new_session_handler(user_id):
+            html_upd, session_id, history = _new_session(user_id)
             row_upd, btn_upds, text_upds = _hidden_sugg
             return ([], html_upd, session_id,
                     gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
@@ -963,21 +999,21 @@ def create_gradio_ui():
                     gr.update(visible=False), gr.update(visible=False, value=""))
 
         new_session_btn.click(
-            new_session_handler, None,
+            new_session_handler, [user_id_state],
             [chatbot, session_list_html, active_session_id] + views + [sugg_row] + sugg_btns + sugg_texts + [cited_files, was_pending, send_btn, stop_btn, eval_btn, eval_panel],
         )
 
-        def _on_del_trigger(value):
+        def _on_del_trigger(value, user_id):
             session_id = value.split("::")[0] if "::" in value else value.strip()
             if session_id:
                 chat_interface.delete_session(session_id)
-            sessions = chat_interface.get_sessions()
+            sessions = chat_interface.get_sessions(user_id=user_id)
             active_id = sessions[-1].get("session_id") if sessions else None
             html = _render_sessions_html(sessions, active_id)
             display, _ = _session_display(active_id)
             return gr.update(value=html), display, active_id
 
-        session_del_txt.change(_on_del_trigger, session_del_txt, [session_list_html, chatbot, active_session_id], show_progress=False)
+        session_del_txt.change(_on_del_trigger, [session_del_txt, user_id_state], [session_list_html, chatbot, active_session_id], show_progress=False)
 
         def stop_handler(active_id):
             if active_id:
@@ -992,7 +1028,7 @@ def create_gradio_ui():
             show_docs, None,
             views + [ai_temperature, ai_max_tools, ai_orchestrator_prompt, ai_aggregation_prompt, ai_fallback_prompt],
         )
-        history_nav_btn.click(show_history, None, views)
+
 
         # Documents
         add_btn.click(upload_handler, [files_input, state_dropdown],
@@ -1202,9 +1238,11 @@ def create_gradio_ui():
         clear_history_btn.click(clear_history_handler, None, history_box)
 
         # On load — restore pending state + namespace status
-        demo.load(_refresh_sessions, None, [session_list_html, chatbot, active_session_id, was_pending])
+        demo.load(_refresh_sessions, None, [user_id_state, user_profile_html, session_list_html, chatbot, active_session_id, was_pending])
         demo.load(render_namespace_status, None, ns_status_html)
 
+
+    demo._rag_system = rag_system  # expose for main.py health endpoint
 
     def _health_endpoint():
         return rag_system.get_health(refresh=True)

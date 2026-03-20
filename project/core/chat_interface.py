@@ -53,16 +53,20 @@ class ChatInterface:
 
     # ── Public read methods ───────────────────────────────────────────────────
 
-    def get_history(self):
+    def get_history(self, user_id: str | None = None):
         with self._lock:
             sessions = self._load_history()
+        if user_id:
+            sessions = [s for s in sessions if s.get("user_id") == user_id]
         if not sessions:
             return []
         return sessions[-1].get("messages", [])
 
-    def get_sessions(self):
+    def get_sessions(self, user_id: str | None = None):
         with self._lock:
             sessions = self._load_history()
+        if user_id:
+            sessions = [s for s in sessions if s.get("user_id") == user_id]
         formatted = []
         for s in sessions:
             messages = s.get("messages", [])
@@ -91,11 +95,13 @@ class ChatInterface:
 
     # ── Write helpers ─────────────────────────────────────────────────────────
 
-    def _append_history(self, role: str, message: str, session_id: str | None = None):
+    def _append_history(self, role: str, message: str, session_id: str | None = None, user_id: str | None = None):
         with self._lock:
-            sessions, session = self._ensure_session_unlocked(session_id)
+            sessions, session = self._ensure_session_unlocked(session_id, user_id=user_id)
             if role == "user" and not session.get("messages"):
                 session["title"] = (message or "New Chat").strip()[:60]
+            if user_id and not session.get("user_id"):
+                session["user_id"] = user_id
             session.get("messages", []).append({
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "role": role,
@@ -131,7 +137,7 @@ class ChatInterface:
             if changed:
                 self._save_history(sessions)
 
-    def _ensure_session_unlocked(self, session_id: str | None = None):
+    def _ensure_session_unlocked(self, session_id: str | None = None, user_id: str | None = None):
         """Like _ensure_session but assumes lock is already held."""
         sessions = self._load_history()
         if not sessions:
@@ -139,13 +145,16 @@ class ChatInterface:
                 "session_id": str(uuid.uuid4()),
                 "created_at": datetime.utcnow().isoformat() + "Z",
                 "title": "New Chat",
+                "user_id": user_id,
                 "messages": [],
             }]
         if session_id:
             for s in sessions:
                 if s.get("session_id") == session_id:
                     return sessions, s
-        return sessions, sessions[-1]
+        # Fall back to last session for this user (or global last)
+        user_sessions = [s for s in sessions if s.get("user_id") == user_id] if user_id else sessions
+        return sessions, (user_sessions[-1] if user_sessions else sessions[-1])
 
     def delete_session(self, session_id: str):
         with self._lock:
@@ -157,13 +166,14 @@ class ChatInterface:
         with self._lock:
             self.history_path.write_text("[]", encoding="utf-8")
 
-    def create_new_session(self, title: str | None = None):
+    def create_new_session(self, title: str | None = None, user_id: str | None = None):
         with self._lock:
             sessions = self._load_history()
             session = {
                 "session_id": str(uuid.uuid4()),
                 "created_at": datetime.utcnow().isoformat() + "Z",
                 "title": title or "New Chat",
+                "user_id": user_id,
                 "messages": [],
             }
             sessions.append(session)
@@ -172,16 +182,16 @@ class ChatInterface:
 
     # ── Chat submission ───────────────────────────────────────────────────────
 
-    def submit_async(self, message: str, session_id: str | None = None) -> str:
+    def submit_async(self, message: str, session_id: str | None = None, user_id: str | None = None) -> str:
         """Store user message + PENDING marker, start AI call in background thread.
         Returns session_id immediately — never blocks."""
         if not self.rag_system.agent_graph:
-            session_id = self._append_history("user", message.strip(), session_id=session_id)
-            self._append_history("assistant", "⚠️ System not initialized!", session_id=session_id)
+            session_id = self._append_history("user", message.strip(), session_id=session_id, user_id=user_id)
+            self._append_history("assistant", "⚠️ System not initialized!", session_id=session_id, user_id=user_id)
             return session_id
 
-        session_id = self._append_history("user", message.strip(), session_id=session_id)
-        self._append_history("assistant", _PENDING, session_id=session_id)
+        session_id = self._append_history("user", message.strip(), session_id=session_id, user_id=user_id)
+        self._append_history("assistant", _PENDING, session_id=session_id, user_id=user_id)
         self._executor.submit(self._invoke_and_update, message.strip(), session_id)
         return session_id
 
@@ -231,15 +241,15 @@ class ChatInterface:
                 return f"📄 Retrieved {count} document chunk{'s' if count != 1 else ''}"
         return None
 
-    def stream_response(self, message: str, session_id: str | None = None, state_filter: str | None = None):
+    def stream_response(self, message: str, session_id: str | None = None, state_filter: str | None = None, user_id: str | None = None):
         """Stream response tokens. Yields (partial_text, session_id, activity_steps) tuples."""
         if not self.rag_system.agent_graph:
-            session_id = self._append_history("user", message.strip(), session_id=session_id)
-            self._append_history("assistant", "⚠️ System not initialized!", session_id=session_id)
+            session_id = self._append_history("user", message.strip(), session_id=session_id, user_id=user_id)
+            self._append_history("assistant", "⚠️ System not initialized!", session_id=session_id, user_id=user_id)
             yield "⚠️ System not initialized!", session_id, []
             return
 
-        session_id = self._append_history("user", message.strip(), session_id=session_id)
+        session_id = self._append_history("user", message.strip(), session_id=session_id, user_id=user_id)
         activity_steps: list[str] = ["💬 Reading your question..."]
         yield "", session_id, activity_steps  # Show first step immediately before graph starts
 
@@ -316,14 +326,21 @@ class ChatInterface:
                     if (isinstance(chunk, AIMessageChunk)
                             and chunk.content
                             and not chunk.tool_call_chunks):
+                        # chunk.content may be a list of content parts (structured Claude output)
+                        chunk_text = chunk.content
+                        if isinstance(chunk_text, list):
+                            chunk_text = "".join(
+                                part.get("text", "") if isinstance(part, dict) else str(part)
+                                for part in chunk_text
+                            )
                         if node == "aggregate_answers":
                             # aggregate_answers streamed token (multi-question synthesis)
-                            _agg_output += chunk.content
+                            _agg_output += chunk_text
                             full_response = _agg_output
                             yield full_response, session_id, activity_steps
                         elif node in ("orchestrator", "fallback_response") and not _is_multi_question:
                             # single-question: orchestrator streams its final answer directly
-                            full_response += chunk.content
+                            full_response += chunk_text
                             yield full_response, session_id, activity_steps
 
                 elif mode == "values":
@@ -367,7 +384,7 @@ class ChatInterface:
             yield full_response, session_id, activity_steps
         finally:
             self._append_history(
-                "assistant", full_response or "No response generated.", session_id=session_id
+                "assistant", full_response or "No response generated.", session_id=session_id, user_id=user_id
             )
             try:
                 self.rag_system.observability.flush()

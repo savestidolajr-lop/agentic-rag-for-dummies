@@ -66,8 +66,11 @@ def _is_qdrant_running(url: str | None = None) -> bool:
     if url is None:
         url = f"{config.QDRANT_URL.rstrip('/')}/collections"
     try:
-        resp = requests.get(url, timeout=1)
-        return resp.status_code == 200
+        headers = {}
+        if config.QDRANT_API_KEY:
+            headers["api-key"] = config.QDRANT_API_KEY
+        resp = requests.get(url, headers=headers, timeout=3)
+        return resp.status_code in (200, 206)
     except Exception:
         return False
 

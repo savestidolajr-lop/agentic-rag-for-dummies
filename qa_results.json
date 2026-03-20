@@ -1,0 +1,156 @@
+[
+  {
+    "timestamp": "2026-03-20T07:10:14.617486Z",
+    "target": "http://localhost:7860",
+    "infra": {
+      "passed": 5,
+      "failed": 0
+    }
+  },
+  {
+    "timestamp": "2026-03-20T07:10:19.343052Z",
+    "target": "http://localhost:7860",
+    "infra": {
+      "passed": 5,
+      "failed": 0
+    },
+    "e2e": {
+      "avg_score": 0,
+      "queries": [
+        {
+          "id": "general_contract",
+          "query": "What are the basic requirements for a valid contract?",
+          "state": "All States",
+          "score": 0,
+          "error": "no response",
+          "elapsed_s": 0.0
+        },
+        {
+          "id": "qld_building",
+          "query": "What legislation governs building and construction in Queensland?",
+          "state": "QLD",
+          "score": 0,
+          "error": "no response",
+          "elapsed_s": 0.0
+        },
+        {
+          "id": "vic_property",
+          "query": "What are the rules around residential tenancy in Victoria?",
+          "state": "VIC",
+          "score": 0,
+          "error": "no response",
+          "elapsed_s": 0.0
+        },
+        {
+          "id": "nsw_planning",
+          "query": "What is the planning approval process in New South Wales?",
+          "state": "NSW",
+          "score": 0,
+          "error": "no response",
+          "elapsed_s": 0.0
+        },
+        {
+          "id": "no_result",
+          "query": "What is the recipe for chocolate cake?",
+          "state": "All States",
+          "score": 0,
+          "error": "no response",
+          "elapsed_s": 0.0
+        }
+      ]
+    }
+  },
+  {
+    "timestamp": "2026-03-20T07:23:23.666891+00:00",
+    "target": "http://localhost:7860",
+    "passed": 12,
+    "failed": 0,
+    "checks": [
+      {
+        "label": "App is reachable (200/302/401)",
+        "status": "pass",
+        "detail": ""
+      },
+      {
+        "label": "Gradio /config accessible",
+        "status": "pass",
+        "detail": "Gradio 6.3.0"
+      },
+      {
+        "label": "Gradio /gradio_api/info accessible (bypasses auth)",
+        "status": "pass",
+        "detail": ""
+      },
+      {
+        "label": "Static /assets/ not blocked by auth",
+        "status": "pass",
+        "detail": ""
+      },
+      {
+        "label": "/queue/ endpoint accessible (bypasses auth)",
+        "status": "pass",
+        "detail": ""
+      },
+      {
+        "label": "Login page serves Clerk JS",
+        "status": "skip",
+        "detail": ""
+      },
+      {
+        "label": "Unauthenticated request \u2192 blocked",
+        "status": "skip",
+        "detail": ""
+      },
+      {
+        "label": "Health \u2014 Qdrant connected + LLM configured",
+        "status": "skip",
+        "detail": ""
+      },
+      {
+        "label": "/auth/verify rejects bad token \u2192 401",
+        "status": "skip",
+        "detail": ""
+      },
+      {
+        "label": "/auth/logout reachable + clears cookie",
+        "status": "skip",
+        "detail": ""
+      },
+      {
+        "label": "Page / returns non-empty HTML",
+        "status": "pass",
+        "detail": ""
+      },
+      {
+        "label": "CSS is injected in page HTML",
+        "status": "pass",
+        "detail": "<style>=True link=True"
+      },
+      {
+        "label": "Gradio app shell rendered",
+        "status": "pass",
+        "detail": "gradio-root=True"
+      },
+      {
+        "label": "Key Gradio API endpoints exposed",
+        "status": "pass",
+        "detail": "39 endpoints exposed: /on_model_change, /chat_handler_ui, /send_suggestion, /send_suggestion_1\u2026"
+      },
+      {
+        "label": "/chat_handler_ui has expected parameters",
+        "status": "pass",
+        "detail": "params: ['message', 'chat_history', 'selected_state']"
+      },
+      {
+        "label": "Custom CSS rules present in page",
+        "status": "pass",
+        "detail": "sidebar-css=True dark-theme=True"
+      },
+      {
+        "label": "Footer elements handled",
+        "status": "pass",
+        "detail": "footer-text-in-html=no"
+      }
+    ]
+  }
+]
