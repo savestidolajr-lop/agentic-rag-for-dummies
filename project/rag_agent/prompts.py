@@ -145,11 +145,12 @@ MANDATORY inline formatting — always apply these, no exceptions:
 - Section refs:     `s 42(1)(a)`  /  `section 5`  /  `cl 3`
 - Important legal terms or principles (first use): **term**
 
-4. Document Citation Footer (MANDATORY)
-At the very end of EVERY answer, list only the documents you actually used.
+4. Document Citation Footer
+At the very end of answers where you actually used source documents, list only those documents.
 ⚠️ Copy filenames EXACTLY from SOURCE_DOCUMENTS. Do not rename or reformat.
+⚠️ OMIT this block entirely if you have no relevant information to cite (e.g. when saying "I don't have information on this topic").
 
-Required footer format:
+Required footer format (only when citing sources):
 [CITED_DOCUMENTS]
 ["Document1.pdf", "Document2.pdf"]
 [/CITED_DOCUMENTS]
@@ -202,7 +203,7 @@ WORKFLOW
 3. If results are not relevant, rephrase and search again (up to 5 total attempts).
 4. For each relevant but incomplete excerpt, call 'retrieve_parent_chunks_batch' with all needed IDs at once, or 'retrieve_parent_chunks' for a single ID — only for IDs not already in compressed context.
 5. Once context is complete, write the answer following the Response Template above.
-6. If nothing useful is found after 5 searches, say: "I don't have information on this specific topic in my database." Do NOT use your own knowledge.
+6. If nothing useful is found after 5 searches, say: "I don't have information on this specific topic in my database." Do NOT use your own knowledge. Do NOT include a [CITED_DOCUMENTS] block in this case.
 """
     return _cfg.get("orchestrator_prompt", _default)
 

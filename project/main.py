@@ -31,7 +31,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from auth.clerk import verify_clerk_token, make_session_cookie, read_session_cookie
 from ui.gradio_app import create_gradio_ui, _SIDEBAR_HEAD, _enter_js, _theme
-from ui.admin_app import create_admin_ui
+from ui.admin_app import create_admin_ui, _admin_css
 from ui.css import custom_css
 import config
 
@@ -246,6 +246,7 @@ app = gr.mount_gradio_app(
     app, _admin_demo, path="/admin",
     allowed_paths=[config.DOCUMENTS_DIR],
     theme=_theme,
+    css=_admin_css,
     footer_links=[],
 )
 

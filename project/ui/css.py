@@ -56,6 +56,7 @@ html, body {
 }
 #sidebar.sidebar-collapsed #sidebar-body { display: none !important; }
 
+
 /* Sidebar body wrapper — hides all content below the hamburger on collapse */
 #sidebar-body {
     display: flex !important;
@@ -216,6 +217,18 @@ html, body {
     box-sizing: border-box !important;
 }
 
+/* ── Chat title (read-only, top of chat area) ── */
+#chat-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #aaa;
+    padding: 10px 0 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#chat-title-html { flex-shrink: 0 !important; }
+
 /* ── Chat view — fills remaining height ── */
 #chat-view {
     flex: 1 1 0 !important;
@@ -223,7 +236,7 @@ html, body {
     display: flex !important;
     flex-direction: column !important;
     overflow: hidden !important;
-    padding: 0 24px !important;
+    padding: 0 5px !important;
     box-sizing: border-box !important;
 }
 
@@ -377,7 +390,6 @@ html, body {
 #chatbot .share-button { display: none !important; }
 #chatbot button[title="Share"],
 #chatbot button[title="Delete"],
-#chatbot button[title="Copy"],
 #chatbot button[aria-label="Share"],
 #chatbot button[aria-label="Delete"],
 #chatbot button[aria-label="Clear"] { display: none !important; }
@@ -623,12 +635,24 @@ h1, h2, h3, h4, h5, h6, p, span, div { color: inherit; }
 /* ── Cited source files ── */
 #cited-files { margin-top: 6px !important; }
 .cited-sources {
-    padding: 8px 12px; background: #161616;
-    border-radius: 10px;
+    background: #161616; border-radius: 10px;
+    overflow: hidden;
 }
-.cited-label {
-    font-size: 11px; color: #444; text-transform: uppercase;
-    letter-spacing: 0.6px; margin-bottom: 6px;
+.cited-summary {
+    font-size: 12px; color: #555; padding: 7px 12px;
+    cursor: pointer; user-select: none; list-style: none;
+    display: flex; align-items: center; gap: 6px;
+}
+.cited-summary::-webkit-details-marker { display: none; }
+.cited-summary::before {
+    content: '▶'; font-size: 9px; color: #444;
+    transition: transform 0.15s;
+}
+.cited-sources[open] > .cited-summary::before { transform: rotate(90deg); }
+.cited-summary:hover { color: #888; }
+.cited-links {
+    padding: 4px 12px 10px;
+    border-top: 1px solid #1e1e1e;
 }
 .cited-link {
     display: inline-block; background: #1e1e1e; color: #888 !important;
@@ -720,9 +744,7 @@ h1, h2, h3, h4, h5, h6, p, span, div { color: inherit; }
 
 /* ── Hide feedback/share buttons but keep copy ── */
 #chatbot .extra-feedback,
-#chatbot .extra-feedback-options,
-#chatbot .message-content.svelte-stpvyx,
-#chatbot .container.svelte-stpvyx { display: none !important; }
+#chatbot .extra-feedback-options { display: none !important; }
 
 /* Style the copy button on each message */
 #chatbot .options { display: flex !important; opacity: 0; transition: opacity 0.15s; }
