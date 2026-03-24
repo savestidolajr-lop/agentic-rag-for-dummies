@@ -1,4 +1,5 @@
 import config
+import torch
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore, FastEmbedSparse, RetrievalMode
 from qdrant_client import QdrantClient
@@ -26,7 +27,13 @@ class VectorDbManager:
             print(f"⚠️  Qdrant remote connection failed ({e}), falling back to local storage.")
             self.__client = QdrantClient(path=config.QDRANT_DB_PATH)
 
-        self.__dense_embeddings = HuggingFaceEmbeddings(model_name=config.DENSE_MODEL)
+        _device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Embedding device: {_device}")
+        self.__dense_embeddings = HuggingFaceEmbeddings(
+            model_name=config.DENSE_MODEL,
+            model_kwargs={"device": _device},
+            encode_kwargs={"batch_size": 128 if _device == "cuda" else 32},
+        )
         self.__sparse_embeddings = FastEmbedSparse(model_name=config.SPARSE_MODEL)
 
     def _ensure_payload_indexes(self, collection_name):
@@ -61,6 +68,25 @@ class VectorDbManager:
                 self.__client.delete_collection(collection_name)
         except Exception as e:
             print(f"Warning: could not delete collection {collection_name}: {e}")
+
+    def delete_by_source(self, collection_name: str, source: str, state: str) -> int:
+        """Delete vectors whose metadata.source and metadata.state both match. Returns deleted count."""
+        try:
+            result = self.__client.delete(
+                collection_name=collection_name,
+                points_selector=qmodels.FilterSelector(
+                    filter=qmodels.Filter(
+                        must=[
+                            qmodels.FieldCondition(key="metadata.source", match=qmodels.MatchValue(value=source)),
+                            qmodels.FieldCondition(key="metadata.state", match=qmodels.MatchValue(value=state)),
+                        ]
+                    )
+                ),
+            )
+            return result.status.value if hasattr(result, "status") else 0
+        except Exception as e:
+            print(f"Warning: could not delete vectors for source '{source}': {e}")
+            return 0
 
     def delete_by_state(self, collection_name: str, state: str) -> int:
         """Delete all vectors whose metadata.state matches the given state. Returns deleted count."""

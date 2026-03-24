@@ -885,8 +885,9 @@ def create_gradio_ui():
         demo.load(_refresh_sessions, None, [user_id_state, user_profile_html, session_list_html, chatbot, active_session_id, was_pending, chat_title_html])
 
 
-    demo._rag_system  = rag_system   # expose for main.py
-    demo._doc_manager = doc_manager  # expose for admin panel
+    demo._rag_system      = rag_system      # expose for main.py
+    demo._doc_manager     = doc_manager     # expose for admin panel
+    demo._chat_interface  = chat_interface  # expose for API routes (shared instance, shared lock)
 
     def _health_endpoint():
         return rag_system.get_health(refresh=True)

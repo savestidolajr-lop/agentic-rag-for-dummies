@@ -4,9 +4,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import shutil
 import json
+import time
 from datetime import datetime
 import config
-from utils import pdfs_to_markdowns
+from utils import pdf_to_markdown
+
+_FILE_CACHE_TTL = 30  # seconds
 
 class DocumentManager:
 
@@ -17,6 +20,34 @@ class DocumentManager:
         self.documents_dir = Path(config.DOCUMENTS_DIR)
         self.documents_dir.mkdir(parents=True, exist_ok=True)
         self.status_path = Path(config.MARKDOWN_DIR).parent / "indexing_status.json"
+        self._files_cache: list | None = None
+        self._files_cache_at: float = 0.0
+        self._cache_lock = threading.Lock()
+
+    def _get_files_cached(self) -> list:
+        """Single rglob scan shared by all listing methods, cached for TTL seconds."""
+        now = time.monotonic()
+        with self._cache_lock:
+            if self._files_cache is not None and (now - self._files_cache_at) < _FILE_CACHE_TTL:
+                return self._files_cache
+        results = []
+        if self.markdown_dir.exists():
+            for p in sorted(self.markdown_dir.rglob("*.md")):
+                try:
+                    rel = p.relative_to(self.markdown_dir)
+                    state = "/".join(rel.parts[:-1]) if len(rel.parts) > 1 else "No State"
+                    filename = rel.parts[-1].replace(".md", ".pdf")
+                    results.append({"state": state, "filename": filename})
+                except Exception:
+                    continue
+        with self._cache_lock:
+            self._files_cache = results
+            self._files_cache_at = time.monotonic()
+        return results
+
+    def _invalidate_cache(self):
+        with self._cache_lock:
+            self._files_cache = None
 
     # ── Indexing status (persists to disk so survives page refreshes) ─────────
 
@@ -83,17 +114,10 @@ class DocumentManager:
         return statuses if statuses else None
 
     def get_namespace_summary(self) -> dict[str, int]:
-        """Return {namespace: file_count} from the markdown directory."""
+        """Return {namespace: file_count} from the cached file list."""
         summary: dict[str, int] = defaultdict(int)
-        if not self.markdown_dir.exists():
-            return {}
-        for p in self.markdown_dir.rglob("*.md"):
-            try:
-                rel = p.relative_to(self.markdown_dir)
-                ns = "/".join(rel.parts[:-1]) if len(rel.parts) > 1 else "No State"
-                summary[ns] += 1
-            except Exception:
-                continue
+        for f in self._get_files_cached():
+            summary[f["state"]] += 1
         return dict(sorted(summary.items()))
         
     def add_documents(self, document_paths, state: str | None = None, progress_callback=None):
@@ -106,60 +130,84 @@ class DocumentManager:
         if not document_paths:
             return 0, 0
 
-        added = 0
-        skipped = 0
         total = len(document_paths)
+        target_dir = self.markdown_dir / state if state else self.markdown_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        orig_dir = self.documents_dir / state if state else self.documents_dir
+        orig_dir.mkdir(parents=True, exist_ok=True)
 
-        for i, doc_path in enumerate(document_paths):
+        lock = threading.Lock()
+        done_count = 0
+
+        def _process_one(doc_path):
+            nonlocal done_count
             fname = Path(doc_path).name
-            self._write_status("upload", namespace=state or "No State",
-                               filename=fname, progress=(i + 1) / total,
-                               done=i + 1, total=total)
-            if progress_callback:
-                progress_callback((i + 1) / total, f"[{state or 'No State'}] {fname}")
-                
-            doc_name = Path(doc_path).stem
-            # Keep documents organized by state/namespace if provided
-            target_dir = self.markdown_dir
-            if state:
-                target_dir = self.markdown_dir / state
-                target_dir.mkdir(parents=True, exist_ok=True)
+            md_path = target_dir / f"{Path(doc_path).stem}.md"
 
-            md_path = target_dir / f"{doc_name}.md"
-
-            # Save original file for later download
-            orig_dir = self.documents_dir / state if state else self.documents_dir
-            orig_dir.mkdir(parents=True, exist_ok=True)
-            orig_dest = orig_dir / Path(doc_path).name
+            orig_dest = orig_dir / fname
             if not orig_dest.exists():
                 shutil.copy(doc_path, orig_dest)
 
-            if md_path.exists():
-                skipped += 1
-                continue
-
             try:
-                if Path(doc_path).suffix.lower() == ".md":
-                    shutil.copy(doc_path, md_path)
-                else:
-                    pdfs_to_markdowns(str(doc_path), overwrite=False, output_dir=target_dir)
-                parent_chunks, child_chunks = self.rag_system.chunker.create_chunks_single(md_path, state=state, original_filename=Path(doc_path).name)
-                
+                if not md_path.exists():
+                    if Path(doc_path).suffix.lower() == ".md":
+                        shutil.copy(doc_path, md_path)
+                    else:
+                        pdf_to_markdown(doc_path, target_dir)
+
+                parent_chunks, child_chunks = self.rag_system.chunker.create_chunks_single(
+                    md_path, state=state, original_filename=fname)
+
+                with lock:
+                    done_count += 1
+                    self._write_status("upload", namespace=state or "No State",
+                                       filename=fname, progress=done_count / total,
+                                       done=done_count, total=total)
+                    if progress_callback:
+                        progress_callback(done_count / total, f"[{state or 'No State'}] {fname}")
+
                 if not child_chunks:
-                    skipped += 1
-                    continue
-                
-                collection = self.rag_system.vector_db.get_collection(self.rag_system.collection_name)
-                collection.add_documents(child_chunks)
-                self.rag_system.parent_store.save_many(parent_chunks)
-                
-                added += 1
+                    return None, None
+                return parent_chunks, child_chunks
 
             except Exception as e:
                 print(f"Error processing {doc_path}: {e}")
-                skipped += 1
+                with lock:
+                    done_count += 1
+                    self._write_status("upload", namespace=state or "No State",
+                                       filename=fname, progress=done_count / total,
+                                       done=done_count, total=total)
+                return None, None
 
+        # Insert into Qdrant every BATCH_SIZE files so progress is saved incrementally.
+        # If the upload is interrupted, already-inserted batches are preserved.
+        _BATCH = 100
+        collection = self.rag_system.vector_db.get_collection(self.rag_system.collection_name)
+        added = 0
+
+        with ThreadPoolExecutor(max_workers=8, thread_name_prefix="doc_upload") as executor:
+            for i in range(0, total, _BATCH):
+                batch = document_paths[i:i + _BATCH]
+                results = list(executor.map(_process_one, batch))
+
+                batch_parent = [c for p, _ in results if p for c in p]
+                batch_child  = [c for _, ch in results if ch for c in ch]
+                added += sum(1 for p, _ in results if p is not None)
+                files_done = min(i + _BATCH, total)
+
+                if batch_child:
+                    # Write status before insert so the UI shows progress during the blocking embed+upload step
+                    self._write_status("upload", namespace=state or "No State",
+                                       filename="indexing batch…",
+                                       progress=files_done / total,
+                                       done=files_done, total=total)
+                    collection.add_documents(batch_child)
+                if batch_parent:
+                    self.rag_system.parent_store.save_many(batch_parent)
+
+        skipped = total - added
         self._clear_status(namespace=state or "No State")
+        self._invalidate_cache()
         return added, skipped
     
     def get_markdown_files(self):
@@ -167,34 +215,15 @@ class DocumentManager:
 
     def get_files_structured(self):
         """Return list of {state, filename} dicts for all indexed documents."""
-        if not self.markdown_dir.exists():
-            return []
-        results = []
-        for p in sorted(self.markdown_dir.rglob("*.md")):
-            try:
-                rel = p.relative_to(self.markdown_dir)
-                state = "/".join(rel.parts[:-1]) if len(rel.parts) > 1 else "No State"
-                filename = rel.parts[-1].replace(".md", ".pdf")
-                results.append({"state": state, "filename": filename})
-            except Exception:
-                continue
-        return results
+        return list(self._get_files_cached())
 
     def get_states(self):
         """Return a sorted list of known namespaces (states) derived from the markdown folder layout."""
-        if not self.markdown_dir.exists():
-            return []
-
-        states = set()
-        for p in self.markdown_dir.rglob("*.md"):
-            try:
-                rel = p.relative_to(self.markdown_dir)
-                if len(rel.parts) > 1:
-                    states.add("/".join(rel.parts[:-1]))
-            except Exception:
-                continue
-
-        return sorted(states)
+        seen = set()
+        for f in self._get_files_cached():
+            if f["state"] != "No State":
+                seen.add(f["state"])
+        return sorted(seen)
 
     def reindex_all(self, progress_callback=None):
         """Clear vectors + parent store, then re-chunk and re-index all existing markdown files
@@ -265,7 +294,45 @@ class DocumentManager:
                 except Exception as e:
                     print(f"Namespace worker failed: {e}")
 
+        self._invalidate_cache()
         return indexed
+
+    def delete_document(self, state: str, filename: str) -> dict:
+        """Delete a single document (PDF + MD + vectors + parent chunks).
+        state is the namespace (e.g. "NSW"), filename is the original PDF name (e.g. "doc.pdf").
+        """
+        summary = {"vectors": 0, "parent_chunks": 0, "markdown_files": 0, "original_files": 0}
+        qdrant_state = "all" if state == "No State" else state
+
+        # 1. Qdrant vectors (metadata.source == filename)
+        summary["vectors"] = self.rag_system.vector_db.delete_by_source(
+            self.rag_system.collection_name, filename, qdrant_state
+        )
+
+        # 2. Parent store JSON files
+        summary["parent_chunks"] = self.rag_system.parent_store.delete_by_source(filename, qdrant_state)
+
+        # 3. Markdown file
+        stem = Path(filename).stem
+        if state == "No State":
+            md_path = self.markdown_dir / f"{stem}.md"
+        else:
+            md_path = self.markdown_dir / state / f"{stem}.md"
+        if md_path.exists():
+            md_path.unlink()
+            summary["markdown_files"] = 1
+
+        # 4. Original document file
+        if state == "No State":
+            orig_path = self.documents_dir / filename
+        else:
+            orig_path = self.documents_dir / state / filename
+        if orig_path.exists():
+            orig_path.unlink()
+            summary["original_files"] = 1
+
+        self._invalidate_cache()
+        return summary
 
     def delete_namespace(self, state: str) -> dict:
         """Delete all data for a specific state/namespace across all storages.
@@ -321,6 +388,7 @@ class DocumentManager:
             except Exception:
                 pass
 
+        self._invalidate_cache()
         return summary
 
     def clear_all(self):
@@ -334,3 +402,4 @@ class DocumentManager:
         self.rag_system.parent_store.clear_store()
         self.rag_system.vector_db.delete_collection(self.rag_system.collection_name)
         self.rag_system.vector_db.create_collection(self.rag_system.collection_name)
+        self._invalidate_cache()

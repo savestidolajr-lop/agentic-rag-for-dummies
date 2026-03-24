@@ -22,6 +22,7 @@ class State(MessagesState):
     rewrittenQuestions: List[str] = []
     agent_answers: Annotated[List[dict], accumulate_or_reset] = []
     state_filter: Annotated[str, _keep_str] = ""
+    user_name: Annotated[str, _keep_str] = ""
 
 class AgentState(MessagesState):
     """State for individual agent subgraph"""
@@ -34,3 +35,4 @@ class AgentState(MessagesState):
     tool_call_count: Annotated[int, operator.add] = 0
     iteration_count: Annotated[int, operator.add] = 0
     state_filter: Annotated[str, _keep_str] = ""
+    user_name: Annotated[str, _keep_str] = ""

@@ -36,8 +36,12 @@ def _get_jwks() -> dict:
     return _jwks_cache
 
 
-def verify_clerk_token(token: str) -> dict:
-    """Verify a Clerk-issued JWT. Returns the decoded payload on success."""
+def verify_clerk_token(token: str, leeway: int = 0) -> dict:
+    """Verify a Clerk-issued JWT. Returns the decoded payload on success.
+
+    leeway: seconds past expiry to still accept (useful for large file uploads
+    where the token may expire mid-transfer before the server processes it).
+    """
     from jwt.algorithms import RSAAlgorithm
 
     jwks = _get_jwks()
@@ -56,6 +60,7 @@ def verify_clerk_token(token: str) -> dict:
         public_key,
         algorithms=["RS256"],
         options={"verify_aud": False},
+        leeway=leeway,
     )
     return payload
 

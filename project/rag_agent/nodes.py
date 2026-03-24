@@ -72,7 +72,9 @@ def orchestrator(state: AgentState, llm_with_tools):
     context_summary = state.get("context_summary", "").strip()
     state_filter = state.get("state_filter", "").strip()
     state_note = f"\n\n[ACTIVE STATE FILTER: {state_filter} — All searches are restricted to {state_filter} documents. The user has already selected this state. Do NOT ask which state they want.]" if state_filter else ""
-    sys_msg = SystemMessage(content=get_orchestrator_prompt() + state_note)
+    user_name = state.get("user_name", "").strip()
+    user_note = f"\n\n[CURRENT USER: {user_name} — Address them by first name when greeting.]" if user_name else ""
+    sys_msg = SystemMessage(content=get_orchestrator_prompt() + state_note + user_note)
     summary_injection = (
         [HumanMessage(content=f"[COMPRESSED CONTEXT FROM PRIOR RESEARCH]\n\n{context_summary}")]
         if context_summary else []

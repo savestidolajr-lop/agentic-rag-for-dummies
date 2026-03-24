@@ -17,3 +17,8 @@ project/chat_history.json
 # Local tooling
 Dockerfile.cloud
 infra/
+
+# Frontend build artifacts
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local

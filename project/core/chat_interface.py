@@ -241,17 +241,17 @@ class ChatInterface:
                 return f"📄 Retrieved {count} document chunk{'s' if count != 1 else ''}"
         return None
 
-    def stream_response(self, message: str, session_id: str | None = None, state_filter: str | None = None, user_id: str | None = None):
+    def stream_response(self, message: str, session_id: str | None = None, state_filter: str | None = None, user_id: str | None = None, user_name: str | None = None):
         """Stream response tokens. Yields (partial_text, session_id, activity_steps) tuples."""
         if not self.rag_system.agent_graph:
             session_id = self._append_history("user", message.strip(), session_id=session_id, user_id=user_id)
             self._append_history("assistant", "⚠️ System not initialized!", session_id=session_id, user_id=user_id)
-            yield "⚠️ System not initialized!", session_id, []
+            yield "⚠️ System not initialized!", session_id, [], False
             return
 
         session_id = self._append_history("user", message.strip(), session_id=session_id, user_id=user_id)
         activity_steps: list[str] = ["💬 Reading your question..."]
-        yield "", session_id, activity_steps  # Show first step immediately before graph starts
+        yield "", session_id, activity_steps, True  # Show first step immediately before graph starts
 
         full_response = ""
         last_state = None
@@ -260,12 +260,15 @@ class ChatInterface:
         graph_input = {"messages": [HumanMessage(content=message.strip())]}
         if active_filter:
             graph_input["state_filter"] = active_filter
+        if user_name:
+            graph_input["user_name"] = user_name
 
         _tool_acc: dict = {}   # accumulates tool_call_chunks by index
         _prev_node: str = ""
         _orchestrator_visits: int = 0
         _is_multi_question: bool = False   # True once we see >1 rewrittenQuestions
         _agg_output: str = ""              # tracks aggregate_answers streaming separately
+        _is_narration: bool = True         # True until first tool completes → marks pre-answer text
         try:
             for namespace, mode, data in self.rag_system.agent_graph.stream(
                 graph_input,
@@ -281,23 +284,23 @@ class ChatInterface:
                     if node and node != _prev_node:
                         if node == "summarize_history":
                             activity_steps = activity_steps + ["🗂 Reviewing conversation history..."]
-                            yield "", session_id, activity_steps
+                            yield "", session_id, activity_steps, True
                         elif node == "rewrite_query":
                             activity_steps = activity_steps + ["🧠 Analysing your question..."]
-                            yield "", session_id, activity_steps
+                            yield "", session_id, activity_steps, True
                         elif node == "orchestrator":
                             _orchestrator_visits += 1
                             if _orchestrator_visits == 1:
                                 activity_steps = activity_steps + ["📋 Planning search strategy..."]
                             else:
                                 activity_steps = activity_steps + ["🔄 Reviewing findings, refining search..."]
-                            yield "", session_id, activity_steps
+                            yield "", session_id, activity_steps, True
                         elif node == "compress_context":
                             activity_steps = activity_steps + ["🗜 Consolidating research context..."]
-                            yield "", session_id, activity_steps
+                            yield "", session_id, activity_steps, True
                         elif node == "aggregate_answers":
                             activity_steps = activity_steps + ["✍️ Writing response..."]
-                            yield "", session_id, activity_steps
+                            yield "", session_id, activity_steps, True
                         _prev_node = node
 
                     # Accumulate streaming tool-call argument fragments
@@ -315,8 +318,11 @@ class ChatInterface:
                         _tool_acc.clear()
                         if step:
                             activity_steps = activity_steps + [step]
-                            if not full_response:
-                                yield "", session_id, activity_steps
+                            yield "", session_id, activity_steps, True
+                        # Reset accumulated response — any text before this tool result
+                        # was orchestrator narration ("I'll search for..."), not the final answer
+                        full_response = ""
+                        _is_narration = False  # after first tool completes, next text = final answer
 
                     # Final answer streaming.
                     # For multi-question queries each orchestrator runs in parallel — capturing all
@@ -337,11 +343,11 @@ class ChatInterface:
                             # aggregate_answers streamed token (multi-question synthesis)
                             _agg_output += chunk_text
                             full_response = _agg_output
-                            yield full_response, session_id, activity_steps
+                            yield full_response, session_id, activity_steps, False
                         elif node in ("orchestrator", "fallback_response") and not _is_multi_question:
                             # single-question: orchestrator streams its final answer directly
                             full_response += chunk_text
-                            yield full_response, session_id, activity_steps
+                            yield full_response, session_id, activity_steps, _is_narration
 
                 elif mode == "values":
                     if not namespace:  # root state only — used for fallback extraction
@@ -365,7 +371,7 @@ class ChatInterface:
                             and not isinstance(msg, HumanMessage)
                             and not isinstance(msg, AIMessageChunk)):
                         full_response = content
-                        yield full_response, session_id, activity_steps
+                        yield full_response, session_id, activity_steps, False
                         break
             # Secondary fallback: reconstruct from agent_answers in last state
             if not full_response and last_state:
@@ -377,11 +383,11 @@ class ChatInterface:
                     )
                     if combined:
                         full_response = combined
-                        yield full_response, session_id, activity_steps
+                        yield full_response, session_id, activity_steps, False
 
         except Exception as e:
             full_response = f"❌ Error: {str(e)}"
-            yield full_response, session_id, activity_steps
+            yield full_response, session_id, activity_steps, False
         finally:
             self._append_history(
                 "assistant", full_response or "No response generated.", session_id=session_id, user_id=user_id

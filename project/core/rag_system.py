@@ -128,6 +128,12 @@ class RAGSystem:
         self._state_filter = None
         self._health_cache = None
         
+    def _create_fast_llm(self):
+        """Always use Haiku for lightweight preprocessing nodes (summarize, rewrite, compress)."""
+        if config.LLM_PROVIDER == "anthropic" and config.ANTHROPIC_API_KEY:
+            return _create_llm("anthropic", "claude-haiku-4-5-20251001", temperature=0)
+        return _create_llm()  # fallback: same as main LLM for non-Anthropic setups
+
     def initialize(self):
         # Only attempt to start a local Qdrant process when no remote URL is configured.
         is_remote = not config.QDRANT_URL.startswith("http://localhost") and not config.QDRANT_URL.startswith("http://127.0.0.1")
@@ -140,9 +146,10 @@ class RAGSystem:
         collection = self.vector_db.get_collection(self.collection_name)
 
         llm = _create_llm()
+        fast_llm = self._create_fast_llm()
         self.tool_factory = ToolFactory(collection)
         tools = self.tool_factory.create_tools()
-        self.agent_graph = create_agent_graph(llm, tools, self._checkpointer)
+        self.agent_graph = create_agent_graph(llm, fast_llm, tools, self._checkpointer)
         self._active_provider = config.LLM_PROVIDER
         self._active_model = config.OPENAI_MODEL if config.LLM_PROVIDER == "openai" else (
             config.ANTHROPIC_MODEL if config.LLM_PROVIDER == "anthropic" else config.LLM_MODEL
@@ -151,18 +158,20 @@ class RAGSystem:
     def switch_model(self, provider: str, model: str):
         """Hot-swap the LLM without restarting. Rebuilds the agent graph with the new model."""
         llm = _create_llm(provider, model)
+        fast_llm = self._create_fast_llm()
         tools = self.tool_factory.create_tools()
-        self.agent_graph = create_agent_graph(llm, tools, self._checkpointer)
+        self.agent_graph = create_agent_graph(llm, fast_llm, tools, self._checkpointer)
         self._active_provider = provider
         self._active_model = model
         self._health_cache = None  # invalidate health cache
-        
+
     def apply_settings(self):
         """Rebuild the LLM graph picking up new temperature from admin_config."""
         print("⚙️  Applying admin settings — rebuilding LLM...")
         llm = _create_llm(self._active_provider, self._active_model)
+        fast_llm = self._create_fast_llm()
         tools = self.tool_factory.create_tools()
-        self.agent_graph = create_agent_graph(llm, tools, self._checkpointer)
+        self.agent_graph = create_agent_graph(llm, fast_llm, tools, self._checkpointer)
         self._health_cache = None
         print("✓ LLM rebuilt with updated settings.")
 

@@ -29,10 +29,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 import gradio as gr
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from auth.clerk import verify_clerk_token, make_session_cookie, read_session_cookie
 from ui.gradio_app import create_gradio_ui, _SIDEBAR_HEAD, _enter_js, _theme
 from ui.admin_app import create_admin_ui, _admin_css
 from ui.css import custom_css
+from api.routes import router as api_router, init_routes
 import config
 
 # ── Clerk / session config ────────────────────────────────────────────────────
@@ -40,10 +42,11 @@ import config
 CLERK_PK       = os.environ.get("CLERK_PUBLISHABLE_KEY", "")
 CLERK_FRONTEND = os.environ.get("CLERK_FRONTEND_API_URL", "")
 
-# Paths that skip auth — Gradio internals + our own auth endpoints
+# Paths that skip auth — Gradio internals + our own auth endpoints + API routes
+# (API routes handle their own Bearer auth via the get_current_user dependency)
 _OPEN_PATHS    = {"/login", "/auth/verify", "/auth/logout", "/auth/callback", "/health"}
 _OPEN_PREFIXES = ("/_", "/static/", "/queue/", "/assets/", "/info", "/config",
-                  "/upload", "/gradio/", "/gradio_api/", "/run/", "/file=")
+                  "/upload", "/gradio/", "/gradio_api/", "/run/", "/file=", "/api/")
 
 # ── Login / callback HTML ─────────────────────────────────────────────────────
 
@@ -161,6 +164,14 @@ _CALLBACK_HTML = """\
 
 # ── Build app ─────────────────────────────────────────────────────────────────
 
+# Clear any stale indexing status files left over from a previous interrupted run
+try:
+    import glob as _glob
+    for _f in _glob.glob(os.path.join(os.path.dirname(__file__), "indexing_status*.json")):
+        os.remove(_f)
+except Exception:
+    pass
+
 print("\n🔨 Creating RAG Assistant...")
 _demo = create_gradio_ui()
 print("✅ RAG Assistant ready.")
@@ -169,12 +180,31 @@ print("🔨 Creating Admin Panel...")
 _admin_demo = create_admin_ui(_demo._rag_system, _demo._doc_manager)
 print("✅ Admin Panel ready.")
 
+# Initialise API routes with the shared service instances (same objects used by Gradio UI)
+init_routes(_demo._chat_interface, _demo._doc_manager, _demo._rag_system)
+print("✅ API routes initialised.")
+
 app = FastAPI(docs_url=None, redoc_url=None)
+
+# ── CORS (allow local Next.js / React dev server) ─────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://52.63.202.41:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ── Auth middleware ───────────────────────────────────────────────────────────
 
 @app.middleware("http")
 async def require_auth(request: Request, call_next):
+    # Always pass OPTIONS through so CORS preflight works
+    if request.method == "OPTIONS":
+        return await call_next(request)
     path = request.url.path
     if path in _OPEN_PATHS or any(path.startswith(p) for p in _OPEN_PREFIXES):
         return await call_next(request)
@@ -235,6 +265,9 @@ async def health():
     if hasattr(_demo, "_rag_system"):
         return _demo._rag_system.get_health(refresh=True)
     return {"ok": True}
+
+# ── API routes (must be included BEFORE Gradio mounts) ───────────────────────
+app.include_router(api_router)
 
 # ── Mount Gradio ──────────────────────────────────────────────────────────────
 

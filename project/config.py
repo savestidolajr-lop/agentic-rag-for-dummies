@@ -23,7 +23,7 @@ SPARSE_VECTOR_NAME = "sparse"
 DENSE_MODEL = "sentence-transformers/all-mpnet-base-v2"
 SPARSE_MODEL = "Qdrant/bm25"
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-RERANKER_FETCH_MULTIPLIER = 3   # over-fetch this many times the requested limit before reranking
+RERANKER_FETCH_MULTIPLIER = 2   # over-fetch this many times the requested limit before reranking
 
 # LLM provider configuration
 # Supported values: "ollama", "openai", or "anthropic"
@@ -54,7 +54,7 @@ AVAILABLE_MODELS = {
 
 # --- Agent Configuration ---
 MAX_TOOL_CALLS = 8
-MAX_ITERATIONS = 10
+MAX_ITERATIONS = 6
 GRAPH_RECURSION_LIMIT = 50
 BASE_TOKEN_THRESHOLD = 10000
 TOKEN_GROWTH_FACTOR = 0.9

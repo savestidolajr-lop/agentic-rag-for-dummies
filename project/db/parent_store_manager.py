@@ -46,6 +46,20 @@ class ParentStoreManager:
         unique_ids = set(parent_ids)
         return [self.load_content(pid) for pid in sorted(unique_ids, key=self._get_sort_key)]
     
+    def delete_by_source(self, source: str, state: str) -> int:
+        """Delete parent chunks whose metadata.source and metadata.state both match."""
+        deleted = 0
+        for p in list(self.__store_path.glob("*.json")):
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                meta = data.get("metadata", {})
+                if meta.get("source") == source and meta.get("state") == state:
+                    p.unlink()
+                    deleted += 1
+            except Exception:
+                continue
+        return deleted
+
     def delete_by_state(self, state: str) -> int:
         """Delete all parent JSON files whose metadata.state matches. Returns deleted count."""
         deleted = 0

@@ -142,8 +142,13 @@ MANDATORY inline formatting — always apply these, no exceptions:
 - Legislation names: **Residential Tenancies Act 2010**
 - Dollar amounts:   **$5,000**  /  **$1.5 million**
 - Key dates:        **1 January 2024**
-- Section refs:     `s 42(1)(a)`  /  `section 5`  /  `cl 3`
+- Section refs:     **s 42(1)(a)**  /  **section 5**  /  **cl 3**  /  **Schedule 1**  /  **Part IV**
 - Important legal terms or principles (first use): **term**
+
+⚠️ CRITICAL — Case names in text:
+- NEVER mention filenames (e.g. "NSW_case.pdf") anywhere in the body of your response.
+- ONLY reference case names that appear explicitly in the retrieved content (e.g. "Smith v Jones [2020] HCA 15").
+- If the retrieved content does not contain a recognisable case name, do not invent one or derive one from the filename — simply describe the legal principle found.
 
 4. Document Citation Footer
 At the very end of answers where you actually used source documents, list only those documents.
@@ -231,6 +236,7 @@ Rules:
 Formatting:
 - Use Markdown (headings, bold, lists) for readability.
 - Write in flowing paragraphs where possible.
+- NEVER mention filenames in the body of your response. Only reference case names and legislation titles as they appear in the retrieved content.
 - Conclude with a Sources section as described below.
 
 Sources section rules:
@@ -300,6 +306,7 @@ Rules:
 Formatting:
 - Use Markdown for clarity (headings, lists, bold) but don't overdo it.
 - Write in flowing paragraphs where possible rather than excessive bullet points.
+- NEVER mention filenames in the body of your response. Only reference case names and legislation titles exactly as they appear in the retrieved content.
 - Conclude with a Sources section as described below.
 
 Sources section rules:
